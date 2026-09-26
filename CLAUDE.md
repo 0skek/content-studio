@@ -18,28 +18,54 @@ cross-platform comparison → weekly AI report citing post IDs → report insigh
 6. **Bengali is written natively**, never translated from English. Generate each language independently.
 
 ## Stack (keep it boring)
-- Backend: FastAPI + SQLite (SQLAlchemy or sqlmodel). No Postgres, Redis, Celery, or auth.
+- Backend: FastAPI + SQLite via SQLAlchemy 2.0; uv project in `backend/`. No Postgres, Redis, Celery, or auth.
+  Tables come from `create_all()`, with no migrations: after a schema change, delete `backend/data/content_studio.db`.
 - Frontend: React (Vite). Plain, functional UI.
 - Scheduler: APScheduler or a simple due-posts loop, plus a "fast-forward time" demo control.
-- Secrets: `.env` only. Never hardcode, print, or commit API keys.
+- Text generation: Gemini via `google-genai`, free-tier key, Flash-class model. No billing: don't enable or rely on it without asking me.
+- Image generation: Cloudflare Workers AI (details below).
+- Secrets: `.env` only, read through `app/config.py`. Names are in `.env.example`: `GEMINI_TEXT_API_KEY`, `CF_ACCOUNT_ID`, `CF_API_TOKEN`.
+  Never hardcode, print, or commit API keys.
+
+## Image generation
+- **API:** Cloudflare Workers AI, model `@cf/black-forest-labs/flux-2-klein-4b`.
+  - Request: `POST https://api.cloudflare.com/client/v4/accounts/{CF_ACCOUNT_ID}/ai/run/@cf/black-forest-labs/flux-2-klein-4b`
+    with `Authorization: Bearer {CF_API_TOKEN}` and a multipart form (`prompt`, `width`, `height`).
+  - Response: JSON with a base64 JPEG in `result.image`.
+- **Timing:** ~17s warm, ~60s cold. HTTP timeout 90s.
+- **Sizes:** request each channel's exact `width`/`height` from channels.json. The model returns exactly that size (verified for all 3 channels), so never resize or crop afterwards.
+- **Jobs:** generate the 3 channels in parallel as background jobs; the UI shows a per-post "generating" state.
+  - Each brief gets one image per channel (3 generations). That channel's bn and en posts share it, and each gets its own headline overlay.
+  - A failed or timed-out job sets the post's `generation_status` to `failed` with the error message. It never leaves a post stuck in `generating`.
+- **No text in images:** image prompts must request NO text/letters/typography.
+  - The model can still draw pseudo-text on signage in busy street/market scenes, so prefer compositions without signs.
+  - Ask for clean space where the headline will go. The approval gate catches the rest.
+- **Headline overlay:** headlines are overlaid in code.
+  - Bengali needs proper shaping: use Pillow with libraqm (`layout_engine=ImageFont.Layout.RAQM`), which is verified working on this machine. Pillow's BASIC layout breaks conjuncts (র্ষ, ক্ষ্য) and reorders vowel signs. HTML/Playwright is the fallback if raqm is unavailable.
+  - Noto Sans Bengali has no Latin glyphs: use it for bn headlines and Noto Sans for en.
+- **Measurements:** `width`, `height`, and `file_size_bytes` are measured from the final (overlaid) file, because that's what the adapters validate.
 
 ## Single sources of truth
-- `backend/config/channels.json` — channel specs (size, aspect ratio, max file MB, caption limit, hashtag limit).
-  Used by BOTH generation and adapter validation. No limits hardcoded anywhere else.
-- `ALLOWED_TRANSITIONS` + `transition(post, new_status)` — the ONLY way post status changes.
-  States: draft → approved | discarded; approved → scheduled; scheduled → published | rejected.
-  Retry = new draft with `parent_post_id` pointing to the discarded one.
+- `backend/config/channels.json`: channel specs (image width/height, aspect ratio + tolerance, max file MB, caption limit, hashtag limit).
+  - Used by BOTH generation and adapter validation. No limits hardcoded anywhere else.
+  - Sizes are multiples of 16 that the image model returns exactly: Instagram 1024×1280 (4:5), LinkedIn 1344×704 (1.91:1), X 1536×864 (16:9).
+  - Aspect-ratio tolerance is ±2%.
+- `ALLOWED_TRANSITIONS` + `transition(post, new_status)` in `app/post_status.py`: the ONLY way post status changes (a test enforces it).
+  - States: draft → approved | discarded; approved → scheduled; scheduled → published | rejected.
+  - Retry = new draft with `parent_post_id` pointing to the discarded one.
+  - Generation progress is a separate field (`generation_status`), not a post status. Only drafts whose generation is `ready` can be approved.
 
 ## Data model
+All timestamps are stored in UTC.
 - briefs: id, title, goal, audience, languages, tone, insights_used (JSON), created_at
-- posts: id, brief_id, channel, language, caption, hashtags, image_path, width, height, file_size_bytes, status, rejection_reason, parent_post_id, scheduled_at, published_at
-- metrics: post_id, fetched_at, impressions, likes, comments, shares, clicks
+- posts: id, brief_id, channel, language, headline, caption, hashtags, image_prompt, image_path, width, height, file_size_bytes, generation_status (pending | generating | ready | failed), generation_error, status, rejection_reason, parent_post_id, scheduled_at, published_at
+- metrics: id, post_id, fetched_at, impressions, likes, comments, shares, clicks
 - reports: id, week_start, body, cited_post_ids (JSON)
 - insights: id, report_id, text, created_at
 
 ## Milestones (do ONE at a time; stop and report when each done-check passes)
-1. Schema, channels.json, transition() + test: scheduling an unapproved post is refused.
-2. Generation: per-channel image + caption, Bengali + English, for one brief. Test: 3 images have 3 different sizes, generated separately.
+1. ✅ (2026-09-26) Schema, channels.json, transition() + test: scheduling an unapproved post is refused.
+2. Generation: per-channel image (parallel background jobs, per-post "generating" state, headline overlay) + caption, Bengali + English, for one brief. Test: 3 images have 3 different sizes, generated separately.
 3. Approval UI: approve / discard / retry (retry keeps lineage).
 4. Mock adapters + validation + scheduler. Test: an oversized caption and a wrong-ratio image are each rejected with a reason.
 5. Synthetic metrics (seeded, platform-realistic) + side-by-side comparison per brief using normalized rates (engagement rate), not raw totals.
@@ -47,6 +73,10 @@ cross-platform comparison → weekly AI report citing post IDs → report insigh
 7. End-to-end demo run + cached fallback assets in case generation is slow live.
 
 Feature freeze after milestone 7. Bug fixes only after that.
+
+## Commands (from `backend/`)
+- Tests: `uv run pytest -q`
+- API: `uv run uvicorn app.main:app --reload` (`GET /health`, docs at `/docs`)
 
 ## How to work
 - Small steps. Show the plan before large changes.

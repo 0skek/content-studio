@@ -1,0 +1,44 @@
+{
+  "instagram": {
+    "display_name": "Instagram",
+    "image": {
+      "width": 1024,
+      "height": 1280,
+      "aspect_ratio": "4:5",
+      "aspect_ratio_tolerance": 0.02,
+      "max_file_size_mb": 8
+    },
+    "caption": {
+      "max_chars": 2200,
+      "max_hashtags": 30
+    }
+  },
+  "linkedin": {
+    "display_name": "LinkedIn",
+    "image": {
+      "width": 1344,
+      "height": 704,
+      "aspect_ratio": "1.91:1",
+      "aspect_ratio_tolerance": 0.02,
+      "max_file_size_mb": 5
+    },
+    "caption": {
+      "max_chars": 3000,
+      "max_hashtags": 5
+    }
+  },
+  "x": {
+    "display_name": "X",
+    "image": {
+      "width": 1536,
+      "height": 864,
+      "aspect_ratio": "16:9",
+      "aspect_ratio_tolerance": 0.02,
+      "max_file_size_mb": 5
+    },
+    "caption": {
+      "max_chars": 280,
+      "max_hashtags": 2
+    }
+  }
+}
