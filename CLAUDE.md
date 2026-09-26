@@ -20,9 +20,11 @@ cross-platform comparison → weekly AI report citing post IDs → report insigh
 ## Stack (keep it boring)
 - Backend: FastAPI + SQLite via SQLAlchemy 2.0; uv project in `backend/`. No Postgres, Redis, Celery, or auth.
   Tables come from `create_all()`, with no migrations: after a schema change, delete `backend/data/content_studio.db`.
-- Frontend: React (Vite). Plain, functional UI.
+- Frontend: React (Vite) + TypeScript in `frontend/`, plain CSS. The Vite dev server proxies API and `/media` paths to the backend on :8000.
 - Scheduler: APScheduler or a simple due-posts loop, plus a "fast-forward time" demo control.
-- Text generation: Gemini via `google-genai`, free-tier key, Flash-class model. No billing: don't enable or rely on it without asking me.
+- Text generation: Gemini via `google-genai` on the free-tier key. No billing: don't enable or rely on it without asking me.
+  - Model `gemini-3.8-flash`. If it is still overloaded (503) or out of quota (429) after retries, fall back to `gemini-3.5-flash`, then `gemini-2.5-flash` (set in `app/config.py`).
+  - 503 "high demand" from Gemini is common. Every copy prompt forbids invented facts (the model once made up a shop address).
 - Image generation: Cloudflare Workers AI (details below).
 - Secrets: `.env` only, read through `app/config.py`. Names are in `.env.example`: `GEMINI_TEXT_API_KEY`, `CF_ACCOUNT_ID`, `CF_API_TOKEN`.
   Never hardcode, print, or commit API keys.
@@ -42,8 +44,9 @@ cross-platform comparison → weekly AI report citing post IDs → report insigh
   - Ask for clean space where the headline will go. The approval gate catches the rest.
 - **Headline overlay:** headlines are overlaid in code.
   - Bengali needs proper shaping: use Pillow with libraqm (`layout_engine=ImageFont.Layout.RAQM`), which is verified working on this machine. Pillow's BASIC layout breaks conjuncts (র্ষ, ক্ষ্য) and reorders vowel signs. HTML/Playwright is the fallback if raqm is unavailable.
-  - Noto Sans Bengali has no Latin glyphs: use it for bn headlines and Noto Sans for en.
+  - Noto Sans Bengali has no Latin glyphs and Pillow has no font fallback, so each headline is split into script runs: Bengali characters use Noto Sans Bengali, everything else uses Noto Sans. Both fonts are bundled in `backend/assets/fonts/`.
 - **Measurements:** `width`, `height`, and `file_size_bytes` are measured from the final (overlaid) file, because that's what the adapters validate.
+- **Files:** `backend/media/briefs/{brief_id}/` holds the raw `{channel}-base.jpg` images and the final `{channel}-{language}-post{post_id}.jpg` posts. The app serves them at `/media`; the folder is gitignored.
 
 ## Single sources of truth
 - `backend/config/channels.json`: channel specs (image width/height, aspect ratio + tolerance, max file MB, caption limit, hashtag limit).
@@ -65,7 +68,7 @@ All timestamps are stored in UTC.
 
 ## Milestones (do ONE at a time; stop and report when each done-check passes)
 1. ✅ (2026-09-26) Schema, channels.json, transition() + test: scheduling an unapproved post is refused.
-2. Generation: per-channel image (parallel background jobs, per-post "generating" state, headline overlay) + caption, Bengali + English, for one brief. Test: 3 images have 3 different sizes, generated separately.
+2. ✅ (2026-09-26) Generation: per-channel image (parallel background jobs, per-post "generating" state, headline overlay) + caption, Bengali + English, for one brief. Test: 3 images have 3 different sizes, generated separately.
 3. Approval UI: approve / discard / retry (retry keeps lineage).
 4. Mock adapters + validation + scheduler. Test: an oversized caption and a wrong-ratio image are each rejected with a reason.
 5. Synthetic metrics (seeded, platform-realistic) + side-by-side comparison per brief using normalized rates (engagement rate), not raw totals.
@@ -74,9 +77,10 @@ All timestamps are stored in UTC.
 
 Feature freeze after milestone 7. Bug fixes only after that.
 
-## Commands (from `backend/`)
-- Tests: `uv run pytest -q`
-- API: `uv run uvicorn app.main:app --reload` (`GET /health`, docs at `/docs`)
+## Commands
+- Backend tests (from `backend/`): `uv run pytest -q`
+- API (from `backend/`): `uv run uvicorn app.main:app --reload` (`GET /health`, docs at `/docs`)
+- UI (from `frontend/`): `npm run dev`, then open http://localhost:5173. Type-check and build with `npm run build`, lint with `npm run lint`.
 
 ## How to work
 - Small steps. Show the plan before large changes.

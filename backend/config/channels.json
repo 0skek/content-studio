@@ -10,7 +10,12 @@
     },
     "caption": {
       "max_chars": 2200,
-      "max_hashtags": 30
+      "max_hashtags": 30,
+      "length_counting": "characters"
+    },
+    "style": {
+      "copy": "Warm, emotive and story-led. Three to five short lines with line breaks and a few relevant emoji. End with a soft call to action (visit, save the post, tag a friend). Eight to fifteen hashtags mixing broad and niche tags.",
+      "visual": "Vertical lifestyle photo with one clear subject (a person or a product) close up, warm natural light, rich festive colours, shallow depth of field."
     }
   },
   "linkedin": {
@@ -24,7 +29,12 @@
     },
     "caption": {
       "max_chars": 3000,
-      "max_hashtags": 5
+      "max_hashtags": 5,
+      "length_counting": "characters"
+    },
+    "style": {
+      "copy": "Professional and insight-led. Open with a hook, tell the business or community story in two or three short paragraphs, no more than one emoji. End with a professional call to action (visit, connect, learn more). Three to five hashtags.",
+      "visual": "Wide professional scene: a team, workspace or craft in action, clean composition, natural light, credible and polished."
     }
   },
   "x": {
@@ -38,7 +48,12 @@
     },
     "caption": {
       "max_chars": 280,
-      "max_hashtags": 2
+      "max_hashtags": 2,
+      "length_counting": "x_weighted"
+    },
+    "style": {
+      "copy": "Punchy and conversational. One or two short sentences with a clear hook and a direct call to action. At most one emoji. One or two hashtags.",
+      "visual": "Wide cinematic banner: bold, high-contrast scene with one strong focal point that still reads at small size."
     }
   }
 }

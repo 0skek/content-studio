@@ -1,17 +1,20 @@
 from collections.abc import Callable, Iterator
+from pathlib import Path
 
 import pytest
 from fastapi.testclient import TestClient
 from sqlalchemy import Engine
 from sqlalchemy.orm import Session, sessionmaker
-from sqlalchemy.pool import StaticPool
 
+from app.channels import get_channel_specs
 from app.db import Base, get_session, make_engine
+from app.generation_clients import GenerationClients
 from app.main import app
 from app.models import Brief, Language, Post, PostStatus
 from app.post_status import transition
+from app.routes.briefs import get_generation_clients, get_media_dir, get_session_factory
+from tests.fakes import FakeImageClient, FakeTextClient
 
-IN_MEMORY_DATABASE_URL = "sqlite://"
 TEST_REJECTION_REASON = "Caption exceeds the channel limit (test)"
 
 # The transition() calls that lead from a fresh draft to each status.
@@ -26,9 +29,9 @@ TRANSITION_PATH_FROM_DRAFT: dict[PostStatus, list[PostStatus]] = {
 
 
 @pytest.fixture
-def engine() -> Iterator[Engine]:
-    # StaticPool keeps one connection, so every session sees the same in-memory database.
-    test_engine = make_engine(IN_MEMORY_DATABASE_URL, poolclass=StaticPool)
+def engine(tmp_path: Path) -> Iterator[Engine]:
+    # A real file, not :memory:, because generation jobs write from several threads at once.
+    test_engine = make_engine(f"sqlite:///{tmp_path / 'test.db'}")
     Base.metadata.create_all(test_engine)
     yield test_engine
     test_engine.dispose()
@@ -46,13 +49,41 @@ def session(session_factory: sessionmaker[Session]) -> Iterator[Session]:
 
 
 @pytest.fixture
-def client(session_factory: sessionmaker[Session]) -> Iterator[TestClient]:
+def media_dir(tmp_path: Path) -> Path:
+    path = tmp_path / "media"
+    path.mkdir()
+    return path
+
+
+@pytest.fixture
+def fake_text() -> FakeTextClient:
+    return FakeTextClient(channels=list(get_channel_specs()))
+
+
+@pytest.fixture
+def fake_images() -> FakeImageClient:
+    return FakeImageClient()
+
+
+@pytest.fixture
+def generation_clients(fake_text: FakeTextClient, fake_images: FakeImageClient) -> GenerationClients:
+    return GenerationClients(text=fake_text, images=fake_images)
+
+
+@pytest.fixture
+def client(
+    session_factory: sessionmaker[Session], generation_clients: GenerationClients, media_dir: Path
+) -> Iterator[TestClient]:
     def get_test_session() -> Iterator[Session]:
         with session_factory() as request_session:
             yield request_session
 
     app.dependency_overrides[get_session] = get_test_session
+    app.dependency_overrides[get_session_factory] = lambda: session_factory
+    app.dependency_overrides[get_generation_clients] = lambda: generation_clients
+    app.dependency_overrides[get_media_dir] = lambda: media_dir
     # Not used as a context manager, so the app lifespan (which touches the real database file) never runs.
+    # Background tasks still run to completion before each request call returns.
     yield TestClient(app)
     app.dependency_overrides.clear()
 

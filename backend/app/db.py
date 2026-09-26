@@ -39,17 +39,19 @@ def utc_now() -> datetime:
     return datetime.now(timezone.utc)
 
 
-def _enable_sqlite_foreign_keys(dbapi_connection: Any, connection_record: Any) -> None:
-    # SQLite ignores foreign keys unless this is switched on for every new connection.
+def _configure_sqlite_connection(dbapi_connection: Any, connection_record: Any) -> None:
     cursor = dbapi_connection.cursor()
+    # SQLite ignores foreign keys unless this is switched on for every new connection.
     cursor.execute("PRAGMA foreign_keys=ON")
+    # WAL lets the UI keep reading while background generation jobs write.
+    cursor.execute("PRAGMA journal_mode=WAL")
     cursor.close()
 
 
 def make_engine(database_url: str, **engine_options: Any) -> Engine:
-    # check_same_thread=False: FastAPI runs sync endpoints in a thread pool.
+    # check_same_thread=False: FastAPI and the generation jobs use sessions from worker threads.
     engine = create_engine(database_url, connect_args={"check_same_thread": False}, **engine_options)
-    event.listen(engine, "connect", _enable_sqlite_foreign_keys)
+    event.listen(engine, "connect", _configure_sqlite_connection)
     return engine
 
 

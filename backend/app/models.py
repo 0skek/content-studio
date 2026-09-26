@@ -61,7 +61,7 @@ class Brief(Base):
     insights_used: Mapped[list[Any]] = mapped_column(JSON, default=list)
     created_at: Mapped[datetime] = mapped_column(UTCDateTime, default=utc_now)
 
-    posts: Mapped[list["Post"]] = relationship(back_populates="brief")
+    posts: Mapped[list["Post"]] = relationship(back_populates="brief", order_by="Post.id")
 
 
 class Post(Base):

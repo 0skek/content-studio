@@ -70,6 +70,14 @@ def add_unknown_field(config):
     config["instagram"]["caption"]["max_emojis"] = 3
 
 
+def remove_linkedin_style(config):
+    del config["linkedin"]["style"]
+
+
+def unknown_x_length_counting(config):
+    config["x"]["caption"]["length_counting"] = "graphemes"
+
+
 @pytest.mark.parametrize(
     ("modify", "expected_fragments"),
     [
@@ -78,6 +86,8 @@ def add_unknown_field(config):
         (stretch_linkedin_width, ["linkedin.image", "1600x704", "aspect_ratio 1.91:1"]),
         (garble_x_aspect_ratio, ["x.image.aspect_ratio", "'16x9'"]),
         (add_unknown_field, ["instagram.caption.max_emojis", "Extra inputs are not permitted"]),
+        (remove_linkedin_style, ["linkedin.style", "Field required"]),
+        (unknown_x_length_counting, ["x.caption.length_counting", "'characters' or 'x_weighted'"]),
     ],
 )
 def test_malformed_config_is_rejected_with_channel_and_field(tmp_path, modify, expected_fragments):

@@ -11,6 +11,7 @@ from types import MappingProxyType
 
 from pydantic import BaseModel, ConfigDict, Field, TypeAdapter, ValidationError, field_validator, model_validator
 
+from app.caption_length import LengthCounting
 from app.config import settings
 
 BYTES_PER_MEGABYTE = 1024 * 1024
@@ -76,8 +77,19 @@ class ImageSpec(BaseModel):
 class CaptionSpec(BaseModel):
     model_config = ConfigDict(frozen=True, extra="forbid")
 
+    # Limits apply to the published text: caption plus hashtags.
     max_chars: int = Field(gt=0)
     max_hashtags: int = Field(ge=0)
+    length_counting: LengthCounting
+
+
+class StyleSpec(BaseModel):
+    """How the channel's posts should feel; generation prompts read this, nothing else hardcodes it."""
+
+    model_config = ConfigDict(frozen=True, extra="forbid")
+
+    copy_style: str = Field(min_length=1, alias="copy")
+    visual_style: str = Field(min_length=1, alias="visual")
 
 
 class ChannelSpec(BaseModel):
@@ -86,6 +98,7 @@ class ChannelSpec(BaseModel):
     display_name: str = Field(min_length=1)
     image: ImageSpec
     caption: CaptionSpec
+    style: StyleSpec
 
 
 _CHANNEL_SPECS_ADAPTER = TypeAdapter(dict[str, ChannelSpec])

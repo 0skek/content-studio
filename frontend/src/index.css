@@ -1,0 +1,390 @@
+:root {
+  --text: #1f1d24;
+  --muted: #6b6375;
+  --bg: #f6f5f8;
+  --panel: #ffffff;
+  --border: #e2e0e6;
+  --accent: #5b3cc4;
+  --ready: #1f7a4d;
+  --failed: #b3261e;
+  --generating: #946200;
+  --radius: 8px;
+
+  font-family: system-ui, 'Segoe UI', Roboto, 'Noto Sans', 'Noto Sans Bengali', sans-serif;
+  font-size: 15px;
+  line-height: 1.5;
+  color: var(--text);
+  background: var(--bg);
+}
+
+* {
+  box-sizing: border-box;
+}
+
+body {
+  margin: 0;
+}
+
+h1,
+h2,
+h3 {
+  margin: 0 0 0.5rem;
+  line-height: 1.25;
+}
+
+.app-header {
+  padding: 1rem 1.5rem;
+  background: var(--panel);
+  border-bottom: 1px solid var(--border);
+}
+
+.app-header h1 {
+  font-size: 1.3rem;
+  margin: 0;
+}
+
+.layout {
+  display: grid;
+  grid-template-columns: 320px 1fr;
+  gap: 1.5rem;
+  padding: 1.5rem;
+  align-items: start;
+}
+
+@media (max-width: 900px) {
+  .layout {
+    grid-template-columns: 1fr;
+  }
+}
+
+.panel {
+  background: var(--panel);
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  padding: 1rem;
+  margin-bottom: 1rem;
+}
+
+.panel h2 {
+  font-size: 1.05rem;
+}
+
+.brief-form label {
+  display: block;
+  font-weight: 600;
+  margin-bottom: 0.75rem;
+}
+
+.brief-form input:not([type='checkbox']),
+.brief-form textarea {
+  display: block;
+  width: 100%;
+  margin-top: 0.25rem;
+  padding: 0.5rem;
+  font: inherit;
+  font-weight: 400;
+  border: 1px solid var(--border);
+  border-radius: 6px;
+}
+
+.brief-form fieldset {
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  margin: 0 0 0.75rem;
+}
+
+.brief-form .checkbox {
+  display: flex;
+  gap: 0.5rem;
+  align-items: center;
+  font-weight: 400;
+  margin: 0.25rem 0;
+}
+
+button {
+  font: inherit;
+  cursor: pointer;
+}
+
+.brief-form button[type='submit'] {
+  width: 100%;
+  padding: 0.6rem;
+  border: none;
+  border-radius: 6px;
+  background: var(--accent);
+  color: white;
+  font-weight: 600;
+}
+
+.brief-form button:disabled {
+  opacity: 0.6;
+  cursor: progress;
+}
+
+.brief-list ul {
+  list-style: none;
+  padding: 0;
+  margin: 0;
+}
+
+.brief-list button {
+  display: flex;
+  flex-direction: column;
+  align-items: flex-start;
+  width: 100%;
+  padding: 0.5rem;
+  border: 1px solid transparent;
+  border-radius: 6px;
+  background: none;
+  text-align: left;
+}
+
+.brief-list button:hover {
+  background: var(--bg);
+}
+
+.brief-list button.selected {
+  border-color: var(--accent);
+  background: #f1edfc;
+}
+
+.brief-title {
+  font-weight: 600;
+}
+
+.muted {
+  color: var(--muted);
+  font-size: 0.9em;
+}
+
+.error {
+  color: var(--failed);
+}
+
+.empty-state {
+  padding: 2rem;
+  text-align: center;
+}
+
+.brief-header {
+  margin-bottom: 1.5rem;
+}
+
+.brief-header dl {
+  display: grid;
+  grid-template-columns: max-content 1fr;
+  gap: 0.25rem 1rem;
+  margin: 0 0 0.5rem;
+}
+
+.brief-header dt {
+  font-weight: 600;
+  color: var(--muted);
+}
+
+.brief-header dd {
+  margin: 0;
+}
+
+.progress {
+  font-weight: 600;
+}
+
+.channel-row {
+  margin-bottom: 2rem;
+}
+
+.channel-posts {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(320px, 1fr));
+  gap: 1rem;
+}
+
+.post-card {
+  background: var(--panel);
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  overflow: hidden;
+}
+
+.post-card > header {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  padding: 0.5rem 0.75rem;
+  font-size: 0.9em;
+  border-bottom: 1px solid var(--border);
+}
+
+.post-card img,
+.image-placeholder {
+  display: block;
+  width: 100%;
+  height: auto;
+}
+
+.image-button {
+  display: block;
+  width: 100%;
+  padding: 0;
+  border: none;
+  background: none;
+  cursor: zoom-in;
+}
+
+.image-button:hover img {
+  opacity: 0.92;
+}
+
+.image-button:focus-visible {
+  outline: 3px solid var(--accent);
+  outline-offset: -3px;
+}
+
+.lightbox {
+  width: 100vw;
+  height: 100vh;
+  max-width: 100vw;
+  max-height: 100vh;
+  margin: 0;
+  padding: 0;
+  border: none;
+  background: transparent;
+  color: white;
+}
+
+.lightbox[open] {
+  display: flex;
+  flex-direction: column;
+}
+
+.lightbox::backdrop {
+  background: rgba(10, 8, 16, 0.88);
+}
+
+.lightbox-stage {
+  flex: 1;
+  display: flex;
+  min-height: 0;
+  overflow: auto;
+  padding: 1rem;
+}
+
+.lightbox-stage img {
+  margin: auto;
+  max-width: 100%;
+  max-height: 100%;
+  object-fit: contain;
+  cursor: zoom-in;
+}
+
+.lightbox.actual-size .lightbox-stage img {
+  max-width: none;
+  max-height: none;
+  cursor: zoom-out;
+}
+
+.lightbox-bar {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.75rem 1rem;
+  align-items: center;
+  justify-content: center;
+  padding: 0.75rem 1rem 1rem;
+}
+
+.lightbox-bar a {
+  color: #cbbcff;
+}
+
+.lightbox-bar button {
+  padding: 0.35rem 0.9rem;
+  border: 1px solid rgba(255, 255, 255, 0.4);
+  border-radius: 6px;
+  background: rgba(255, 255, 255, 0.08);
+  color: white;
+}
+
+.lightbox-bar button:hover {
+  background: rgba(255, 255, 255, 0.18);
+}
+
+.image-placeholder {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  background: repeating-linear-gradient(45deg, #efedf3, #efedf3 12px, #e7e4ec 12px, #e7e4ec 24px);
+  color: var(--muted);
+}
+
+.spinner::before {
+  content: '';
+  display: inline-block;
+  width: 0.9em;
+  height: 0.9em;
+  margin-right: 0.5em;
+  border: 2px solid var(--generating);
+  border-right-color: transparent;
+  border-radius: 50%;
+  vertical-align: -0.1em;
+  animation: spin 0.8s linear infinite;
+}
+
+@keyframes spin {
+  to {
+    transform: rotate(360deg);
+  }
+}
+
+.post-card > .error,
+.post-copy {
+  padding: 0.75rem;
+  margin: 0;
+}
+
+.post-copy p {
+  margin: 0 0 0.5rem;
+}
+
+.headline {
+  font-weight: 700;
+  font-size: 1.05em;
+}
+
+.caption {
+  white-space: pre-wrap;
+}
+
+.hashtags {
+  color: var(--accent);
+}
+
+.meta {
+  color: var(--muted);
+  font-size: 0.85em;
+}
+
+.badge {
+  padding: 0.1rem 0.5rem;
+  border-radius: 999px;
+  font-size: 0.8em;
+  font-weight: 600;
+  text-transform: uppercase;
+  letter-spacing: 0.03em;
+}
+
+.badge-ready {
+  background: #e3f4ea;
+  color: var(--ready);
+}
+
+.badge-failed {
+  background: #fbe6e4;
+  color: var(--failed);
+}
+
+.badge-pending,
+.badge-generating {
+  background: #fdf2d6;
+  color: var(--generating);
+}
