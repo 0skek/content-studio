@@ -25,7 +25,7 @@ def valid_report_for(prompt: str) -> ReportDraft:
         findings=[ReportClaim(text="Instagram led on engagement rate.", post_ids=cited)],
         insights=[
             ReportClaim(text="Lead with Bengali copy on Instagram.", post_ids=cited),
-            ReportClaim(text="Keep LinkedIn to three hashtags or fewer.", post_ids=cited),
+            ReportClaim(text="Keep Facebook to three hashtags or fewer.", post_ids=cited),
         ],
     )
 
@@ -50,13 +50,13 @@ def default_copy(language: Language, channel: str) -> ChannelCopy:
             channel=channel,
             headline="নতুন বছরের নতুন সাজ",
             caption=f"বৈশাখের রঙে সাজুন, আমাদের নতুন সংগ্রহ দেখে যান ({channel})",
-            hashtags=["পহেলাবৈশাখ"],
+            hashtags=["পয়লাবৈশাখ"],
         )
     return ChannelCopy(
         channel=channel,
         headline="New year, new colours",
-        caption=f"Celebrate Boishakh in colour and visit our new collection ({channel})",
-        hashtags=["PohelaBoishakh"],
+        caption=f"Celebrate Baishakh in colour and visit our new collection ({channel})",
+        hashtags=["PoilaBaishakh"],
     )
 
 

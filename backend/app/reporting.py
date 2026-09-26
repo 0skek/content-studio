@@ -5,14 +5,16 @@
 2. One text-model call writes a summary, findings and actionable insights, each citing post IDs. The report
    stores this evidence too, so its charts show exactly the numbers the model was given.
 3. Citations are validated: every claim must cite at least one ID, and every cited ID (including any "#123"
-   written in the text) must be a post in that evidence. Otherwise the report is regenerated with the problems
-   as feedback, up to MAX_REPORT_ATTEMPTS; after that it fails and nothing is saved.
+   written in the text) must be a post in that evidence. Findings and insights must also compare like for like:
+   one citing several channels and several languages must cite each of those channels in each of those languages,
+   or a channel difference could really be a language difference. Otherwise the report is regenerated with the
+   problems as feedback, up to MAX_REPORT_ATTEMPTS; after that it fails and nothing is saved.
 4. The insights are stored, shown on the brief form and injected into the next brief's prompts (rule 4).
 """
 
 import json
 import re
-from collections.abc import Callable, Sequence
+from collections.abc import Callable, Mapping, Sequence
 from dataclasses import dataclass
 from datetime import datetime, timedelta
 
@@ -31,7 +33,7 @@ REPORT_WINDOW = timedelta(days=7)
 MAX_REPORT_ATTEMPTS = 3
 MIN_INSIGHTS = 1
 MAX_INSIGHTS = 4
-# Common rules of thumb, used only to group posts for the analysis: LinkedIn advises about 3 hashtags, and 140
+# Common rules of thumb, used only to group posts for the analysis: about 3 hashtags at most on Facebook, and 140
 # characters is the classic short-post length.
 FEW_HASHTAGS_MAX = 3
 SHORT_POST_MAX_LENGTH = 140
@@ -107,6 +109,11 @@ class Evidence:
     @property
     def post_ids(self) -> set[int]:
         return {item.post.id for item in self.posts}
+
+    @property
+    def slots(self) -> dict[int, tuple[str, Language]]:
+        """Each post's channel and language."""
+        return {item.post.id: (item.post.channel, Language(item.post.language)) for item in self.posts}
 
 
 def _totals(items: Sequence[PostEvidence]) -> MetricValues:
@@ -204,6 +211,33 @@ def _percent(rate: float | None) -> str:
     return "n/a" if rate is None else f"{rate * PERCENT:.2f}%"
 
 
+def _slot_name(slot: tuple[str, Language], channel_names: dict[str, str]) -> str:
+    channel, language = slot
+    return f"{channel_names[channel]} {LANGUAGE_NAMES[language]}"
+
+
+def _like_for_like_lines(evidence: Evidence, channel_names: dict[str, str]) -> list[str]:
+    """One line per brief and language: that brief's post on each channel, the same content side by side."""
+    sets: dict[tuple[int, Language], dict[str, PostEvidence]] = {}
+    for item in evidence.posts:  # Oldest first, so a retry's newer post takes its slot.
+        sets.setdefault((item.post.brief_id, Language(item.post.language)), {})[item.post.channel] = item
+    lines = []
+    for (_brief_id, language), by_channel in sets.items():
+        cells = []
+        for channel, name in channel_names.items():
+            item = by_channel.get(channel)
+            if item is None:
+                cells.append(f"{name} no post this week")
+                continue
+            cells.append(
+                f"{name} #{item.post.id} engagement rate {_percent(item.performance.engagement_rate)}, "
+                f"click-through rate {_percent(item.performance.click_through_rate)}"
+            )
+        title = next(iter(by_channel.values())).post.brief.title
+        lines.append(f"- brief \"{title}\", {LANGUAGE_NAMES[language]}: " + "; ".join(cells))
+    return lines
+
+
 def report_prompt(evidence: Evidence, channel_names: dict[str, str], feedback: Sequence[str] = ()) -> str:
     post_lines = [
         f"- post #{item.post.id}: {channel_names[item.post.channel]}, {LANGUAGE_NAMES[Language(item.post.language)]}, "
@@ -220,12 +254,15 @@ def report_prompt(evidence: Evidence, channel_names: dict[str, str], feedback: S
         for group in evidence.groups
     ]
     sections = [
-        "You are the social media analyst for a Bangladeshi brand. Write this week's cross-platform performance "
+        "You are the social media analyst for a brand in West Bengal, India. Write this week's cross-platform performance "
         "report from the data below.",
         f"Week: {evidence.window_start:%Y-%m-%d %H:%M} to {evidence.window_end:%Y-%m-%d %H:%M} UTC. "
         "Engagement rate = (likes + comments + shares) / impressions. Click-through rate = clicks / impressions.",
         "Published posts\n" + "\n".join(post_lines),
-        "Pooled groups (rates are total over total)\n" + "\n".join(group_lines),
+        "Like-for-like sets (one brief in one language, its post on each channel: compare channels here)\n"
+        + "\n".join(_like_for_like_lines(evidence, channel_names)),
+        "Pooled groups (rates are total over total; a channel's own group pools both languages)\n"
+        + "\n".join(group_lines),
         "Write\n"
         "- summary: two or three sentences on the week.\n"
         "- findings: three to six specific findings. Compare rates, never raw totals, and name the channels or "
@@ -237,11 +274,16 @@ def report_prompt(evidence: Evidence, channel_names: dict[str, str], feedback: S
         "- Every summary, finding and insight lists in post_ids the IDs of the posts its numbers come from. "
         "Use only post IDs that appear in the data above; never make up an ID.\n"
         "- Use only numbers that appear in the data above. Do not invent figures, trends or causes.\n"
+        "- Compare like for like. A difference between channels counts only with the language held constant: "
+        "compare channels within a like-for-like set or within one language's channel groups, and compare "
+        "languages within one channel. Never set one language's post on one channel against another language's "
+        "post on another channel (such as a Bengali Instagram post against an English Facebook post): the "
+        "language changes the numbers too. Where no like-for-like comparison exists, say so instead of comparing.\n"
         "- Write in English.",
     ]
     if feedback:
         sections.append(
-            "Your previous answer broke the citation rules. Fix every one of these:\n"
+            "Your previous answer broke these rules. Fix every one of these:\n"
             + "\n".join(f"- {problem}" for problem in feedback)
         )
     return "\n\n".join(sections)
@@ -259,7 +301,7 @@ def _claims(draft: ReportDraft) -> list[tuple[str, ReportClaim]]:
 
 
 def citation_problems(draft: ReportDraft, known_post_ids: set[int]) -> list[str]:
-    """Everything that stops the report being saved. Empty means every claim cites real posts from the data."""
+    """Citation problems. Empty means every claim cites real posts from the data."""
     problems = []
     if not draft.findings:
         problems.append("the report has no findings")
@@ -276,6 +318,38 @@ def citation_problems(draft: ReportDraft, known_post_ids: set[int]) -> list[str]
             listed = ", ".join(f"#{post_id}" for post_id in unknown)
             problems.append(f"{name} cites {listed}, which is not a post in this week's data")
     return problems
+
+
+def comparison_problems(
+    draft: ReportDraft, slots: Mapping[int, tuple[str, Language]], channel_names: dict[str, str]
+) -> list[str]:
+    """Findings and insights that are not like for like: their posts span several channels and several languages
+    without covering every one of those channels in every one of those languages.
+
+    The summary is exempt, since it describes the whole week and may cite every post; the prompt still holds it to
+    the rule. Unknown IDs are left to citation_problems.
+    """
+    problems = []
+    for name, claim in _claims(draft)[1:]:  # [1:] skips the summary.
+        cited = {post_id: slots[post_id] for post_id in claim.post_ids if post_id in slots}
+        channels = {channel for channel, _language in cited.values()}
+        languages = {language for _channel, language in cited.values()}
+        covered = set(cited.values())
+        if len(channels) > 1 and len(languages) > 1 and any(
+            (channel, language) not in covered for channel in channels for language in languages
+        ):
+            listed = ", ".join(f"{_slot_name(slot, channel_names)} #{post_id}" for post_id, slot in sorted(cited.items()))
+            problems.append(
+                f"{name} compares posts that differ in both channel and language ({listed}), so a channel difference "
+                "could really be a language difference: compare channels within one language, or languages within "
+                "one channel"
+            )
+    return problems
+
+
+def report_problems(draft: ReportDraft, evidence: Evidence, channel_names: dict[str, str]) -> list[str]:
+    """Everything that stops the report being saved."""
+    return citation_problems(draft, evidence.post_ids) + comparison_problems(draft, evidence.slots, channel_names)
 
 
 def cited_post_ids(draft: ReportDraft) -> list[int]:
@@ -334,7 +408,7 @@ def generate_weekly_report(
     specs: dict[str, ChannelSpec],
     channel_names: dict[str, str],
 ) -> Report:
-    """Write, validate (regenerating on bad citations) and save the report and its insights."""
+    """Write, validate (regenerating on bad citations or unlike comparisons) and save the report and its insights."""
     evidence = gather_evidence(session, now, specs, channel_names)
     if not evidence.posts:
         raise NothingToReport(
@@ -344,12 +418,13 @@ def generate_weekly_report(
     problems: list[str] = []
     for _attempt in range(MAX_REPORT_ATTEMPTS):
         draft = text_client.generate(report_prompt(evidence, channel_names, problems), ReportDraft)
-        problems = citation_problems(draft, evidence.post_ids)
+        problems = report_problems(draft, evidence, channel_names)
         if not problems:
             break
     else:
         raise ReportGenerationFailed(
-            f"The report still broke the citation rules after {MAX_REPORT_ATTEMPTS} attempts: " + "; ".join(problems)
+            f"The report still broke the citation or like-for-like rules after {MAX_REPORT_ATTEMPTS} attempts: "
+            + "; ".join(problems)
         )
 
     report = Report(

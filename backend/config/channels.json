@@ -2,8 +2,8 @@
   "instagram": {
     "display_name": "Instagram",
     "image": {
-      "width": 1024,
-      "height": 1280,
+      "width": 928,
+      "height": 1152,
       "aspect_ratio": "4:5",
       "aspect_ratio_tolerance": 0.02,
       "max_file_size_mb": 8
@@ -14,34 +14,34 @@
       "length_counting": "characters"
     },
     "style": {
-      "copy": "Warm, emotive and story-led. Three to five short lines with line breaks and a few relevant emoji. End with a soft call to action (visit, save the post, tag a friend). Eight to fifteen hashtags mixing broad and niche tags.",
+      "copy": "Warm, emotive and story-led. Three to five short lines, each on its own line, with two or three relevant emoji in the text. End with a soft call to action (visit, save the post, tag a friend). Eight to fifteen hashtags mixing broad and niche tags.",
       "visual": "Vertical lifestyle photo with one clear subject (a person or a product) framed close and off-centre, warm natural light, rich festive colours, shallow depth of field."
     }
   },
-  "linkedin": {
-    "display_name": "LinkedIn",
+  "facebook": {
+    "display_name": "Facebook",
     "image": {
-      "width": 1344,
-      "height": 704,
-      "aspect_ratio": "1.91:1",
+      "width": 1024,
+      "height": 1024,
+      "aspect_ratio": "1:1",
       "aspect_ratio_tolerance": 0.02,
-      "max_file_size_mb": 5
+      "max_file_size_mb": 30
     },
     "caption": {
-      "max_chars": 3000,
+      "max_chars": 63206,
       "max_hashtags": 5,
       "length_counting": "characters"
     },
     "style": {
-      "copy": "Professional and insight-led. Open with a hook, tell the business or community story in two or three short paragraphs, no more than one emoji. End with a professional call to action (visit, connect, learn more). Three to five hashtags.",
-      "visual": "Wide professional scene: a team, workspace or craft in action, clean composition, natural light, credible and polished."
+      "copy": "Warm, conversational and community-minded, like a local shop talking to its neighbours. Two or three short paragraphs that invite comments and shares, with a question or a reason to tag someone. A few emoji at most. End with a clear call to action (visit, message us, share with a friend). Two to four hashtags.",
+      "visual": "Square, thumb-stopping lifestyle scene with people and warmth: a family, friends or a shopkeeper with the product, centred and inviting, bright natural light."
     }
   },
   "x": {
     "display_name": "X",
     "image": {
-      "width": 1536,
-      "height": 864,
+      "width": 1376,
+      "height": 768,
       "aspect_ratio": "16:9",
       "aspect_ratio_tolerance": 0.02,
       "max_file_size_mb": 5

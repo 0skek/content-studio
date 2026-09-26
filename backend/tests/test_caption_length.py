@@ -46,4 +46,4 @@ def test_x_uses_weighted_counting_and_the_others_count_characters():
 
     assert specs["x"].caption.length_counting == LengthCounting.X_WEIGHTED
     assert specs["instagram"].caption.length_counting == LengthCounting.CHARACTERS
-    assert specs["linkedin"].caption.length_counting == LengthCounting.CHARACTERS
+    assert specs["facebook"].caption.length_counting == LengthCounting.CHARACTERS

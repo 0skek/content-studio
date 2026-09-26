@@ -1,4 +1,5 @@
 import { useEffect, useState } from 'react'
+import { Flask, Plus, WarningCircle } from '@phosphor-icons/react'
 import {
   api,
   errorText,
@@ -6,32 +7,38 @@ import {
   type BriefSummary,
   type Channel,
   type DeletedBrief,
-  type Health,
   type TakenDown,
 } from './api'
 import { AdapterBench } from './components/AdapterBench'
+import { LogoMark } from './components/Brand'
 import { BriefForm } from './components/BriefForm'
 import { BriefList } from './components/BriefList'
 import { BriefView } from './components/BriefView'
 import { ClockBar } from './components/ClockBar'
+import { ConfirmProvider } from './components/ConfirmProvider'
 import { FeedsView } from './components/FeedsView'
 import { ReportsView } from './components/ReportsView'
 
 type Tab = 'studio' | 'feeds' | 'reports' | 'bench'
-const TABS: Tab[] = ['studio', 'feeds', 'reports', 'bench']
+const TABS: { id: Tab; label: string }[] = [
+  { id: 'studio', label: 'Studio' },
+  { id: 'feeds', label: 'Channel feeds' },
+  { id: 'reports', label: 'Reports' },
+  { id: 'bench', label: 'Adapter bench' },
+]
 
 // The open tab lives in the URL hash (#reports), so a tab can be linked or reloaded directly.
 function tabFromHash(): Tab {
   const hash = window.location.hash.slice(1)
-  return TABS.find((tab) => tab === hash) ?? 'studio'
+  return TABS.find((tab) => tab.id === hash)?.id ?? 'studio'
 }
 
 function App() {
   const [channels, setChannels] = useState<Channel[]>([])
-  const [briefs, setBriefs] = useState<BriefSummary[]>([])
+  const [briefs, setBriefs] = useState<BriefSummary[] | null>(null)
+  // null means the New brief composer is open.
   const [selectedBriefId, setSelectedBriefId] = useState<number | null>(null)
   const [loadError, setLoadError] = useState<string | null>(null)
-  const [health, setHealth] = useState<Health | null>(null)
   const [tab, setTabState] = useState<Tab>(tabFromHash)
 
   function setTab(next: Tab) {
@@ -51,15 +58,25 @@ function App() {
     setLoadError(errorText(caught))
   }
 
+  // Back/forward and hand-edited URLs change the hash without a reload; follow them.
   useEffect(() => {
-    api.health().then(setHealth).catch(showLoadError)
+    const followHash = () => setTabState(tabFromHash())
+    window.addEventListener('hashchange', followHash)
+    return () => window.removeEventListener('hashchange', followHash)
+  }, [])
+
+  useEffect(() => {
     api.listChannels().then(setChannels).catch(showLoadError)
     api.listBriefs().then(setBriefs).catch(showLoadError)
   }, [])
 
-  function handleCreated(brief: Brief) {
-    setSelectedBriefId(brief.id)
+  function selectBrief(briefId: number | null) {
+    setSelectedBriefId(briefId)
     setNotice(null)
+  }
+
+  function handleCreated(brief: Brief) {
+    selectBrief(brief.id)
     api.listBriefs().then(setBriefs).catch(showLoadError)
   }
 
@@ -87,89 +104,103 @@ function App() {
   }
 
   return (
-    <div className="app">
-      <header className="app-header">
-        <h1>AI Content Studio</h1>
-        {health && !health.production_providers && (
-          <span className="dev-chip" title="Local development providers are on; switch them off in .env before the demo.">
-            DEV: text={health.text_provider} · images={health.image_provider}
-          </span>
-        )}
-        <nav className="tabs">
-          <button type="button" className={tab === 'studio' ? 'active' : ''} onClick={() => setTab('studio')}>
-            Studio
-          </button>
-          <button type="button" className={tab === 'feeds' ? 'active' : ''} onClick={() => setTab('feeds')}>
-            Channel feeds
-          </button>
-          <button type="button" className={tab === 'reports' ? 'active' : ''} onClick={() => setTab('reports')}>
-            Reports
-            {writingReport && (
-              <span className="tab-busy">
-                <span className="button-spinner" aria-hidden="true" /> writing…
-              </span>
-            )}
-          </button>
-          <button type="button" className={tab === 'bench' ? 'active' : ''} onClick={() => setTab('bench')}>
-            Adapter test bench
-          </button>
-        </nav>
-        <ClockBar onPublished={() => setPublishedToken((token) => token + 1)} />
-        {loadError && <p className="error">{loadError}</p>}
+    <ConfirmProvider>
+      <a className="skip-link" href="#main">
+        Skip to content
+      </a>
+      <header className="topbar">
+        <div className="topbar-inner">
+          <a className="brand" href="#studio" onClick={() => setTab('studio')}>
+            <LogoMark />
+            <span className="brand-name">Content Studio</span>
+          </a>
+          <nav className="tabs" aria-label="Sections">
+            {TABS.map((entry) => (
+              <button
+                key={entry.id}
+                type="button"
+                className={entry.id === 'bench' ? 'tab tab-lab' : 'tab'}
+                aria-current={tab === entry.id ? 'page' : undefined}
+                title={
+                  entry.id === 'bench'
+                    ? 'Experiment corner for the hackathon: shows the adapters rejecting constraint violations. Nothing is stored.'
+                    : undefined
+                }
+                onClick={() => setTab(entry.id)}
+              >
+                {entry.id === 'bench' && <Flask size={15} weight="duotone" aria-hidden="true" />}
+                {entry.label}
+                {entry.id === 'bench' && <span className="tab-tag">Experiment</span>}
+                {entry.id === 'reports' && writingReport && <span className="tab-busy" aria-label="writing a report" />}
+              </button>
+            ))}
+          </nav>
+          <div className="topbar-tools">
+            <ClockBar onPublished={() => setPublishedToken((token) => token + 1)} />
+          </div>
+        </div>
       </header>
-      {tab === 'bench' && <AdapterBench channels={channels} />}
-      {tab === 'feeds' && (
-        <FeedsView
-          channels={channels}
-          refreshToken={publishedToken}
-          onTakenDown={handleTakenDown}
-        />
+
+      {loadError && (
+        <div className="banner banner-error" role="alert">
+          <WarningCircle size={18} weight="bold" aria-hidden="true" /> {loadError}
+        </div>
       )}
-      {/* Kept mounted while hidden, so a report being written survives switching tabs. */}
-      <div hidden={tab !== 'reports'}>
-        <ReportsView
-          channels={channels}
-          reportsVersion={reportsVersion}
-          visible={tab === 'reports'}
-          onReportsChanged={() => setInsightsVersion((version) => version + 1)}
-          onGeneratingChange={setWritingReport}
-        />
-      </div>
-      {tab === 'studio' && (
-      <div className="layout">
-        <aside>
-          <BriefForm onCreated={handleCreated} insightsVersion={insightsVersion} />
-          <BriefList
-            briefs={briefs}
-            selectedBriefId={selectedBriefId}
-            onSelect={(briefId) => {
-              setSelectedBriefId(briefId)
-              setNotice(null)
-            }}
+
+      <main id="main" className="main">
+        {tab === 'bench' && <AdapterBench channels={channels} />}
+        {tab === 'feeds' && <FeedsView channels={channels} refreshToken={publishedToken} onTakenDown={handleTakenDown} />}
+        {/* Kept mounted while hidden, so a report being written survives switching tabs. */}
+        <div hidden={tab !== 'reports'}>
+          <ReportsView
+            channels={channels}
+            reportsVersion={reportsVersion}
+            visible={tab === 'reports'}
+            onReportsChanged={() => setInsightsVersion((version) => version + 1)}
+            onGeneratingChange={setWritingReport}
           />
-        </aside>
-        <main>
-          {notice && (
-            <p className="notice" role="status">
-              {notice}
-            </p>
-          )}
-          {selectedBriefId === null ? (
-            <p className="muted empty-state">Create a brief or pick one from the list.</p>
-          ) : (
-            <BriefView
-              key={selectedBriefId}
-              briefId={selectedBriefId}
-              channels={channels}
-              refreshToken={publishedToken}
-              onDeleted={handleBriefDeleted}
-              onTakenDown={handleTakenDown}
-            />
-          )}
-        </main>
-      </div>
-      )}
-    </div>
+        </div>
+        {tab === 'studio' && (
+          <div className="studio">
+            <aside className="rail" aria-label="Briefs">
+              <div className="rail-head">
+                <h2>Briefs</h2>
+                <button
+                  type="button"
+                  className="btn btn-primary btn-sm"
+                  aria-pressed={selectedBriefId === null}
+                  onClick={() => selectBrief(null)}
+                >
+                  <Plus size={14} weight="bold" aria-hidden="true" /> New brief
+                </button>
+              </div>
+              <BriefList briefs={briefs} selectedBriefId={selectedBriefId} onSelect={selectBrief} />
+            </aside>
+            <div className="stage">
+              {notice && (
+                <p className="notice" role="status">
+                  {notice}
+                </p>
+              )}
+              {/* The composer stays mounted, so a half-written brief survives a look at another brief. */}
+              <div hidden={selectedBriefId !== null}>
+                <BriefForm onCreated={handleCreated} insightsVersion={insightsVersion} />
+              </div>
+              {selectedBriefId !== null && (
+                <BriefView
+                  key={selectedBriefId}
+                  briefId={selectedBriefId}
+                  channels={channels}
+                  refreshToken={publishedToken}
+                  onDeleted={handleBriefDeleted}
+                  onTakenDown={handleTakenDown}
+                />
+              )}
+            </div>
+          </div>
+        )}
+      </main>
+    </ConfirmProvider>
   )
 }
 

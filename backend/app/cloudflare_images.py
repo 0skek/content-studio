@@ -19,7 +19,7 @@ logger = logging.getLogger(__name__)
 
 
 class ImageGenerationError(Exception):
-    """Cloudflare could not produce an image; the message is safe to show in the UI."""
+    """The image service (Gemini, Cloudflare or the local server) could not produce an image; safe to show in the UI."""
 
 
 class CloudflareImageClient:

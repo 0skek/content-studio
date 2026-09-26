@@ -6,7 +6,7 @@ import pytest
 from app.channels import BYTES_PER_MEGABYTE, ChannelConfigError, load_channel_specs
 from app.config import settings
 
-EXPECTED_CHANNELS = {"instagram", "linkedin", "x"}
+EXPECTED_CHANNELS = {"instagram", "facebook", "x"}
 
 
 @pytest.fixture(scope="module")
@@ -58,8 +58,8 @@ def zero_instagram_caption_limit(config):
     config["instagram"]["caption"]["max_chars"] = 0
 
 
-def stretch_linkedin_width(config):
-    config["linkedin"]["image"]["width"] = 1600
+def stretch_facebook_width(config):
+    config["facebook"]["image"]["width"] = 1600
 
 
 def garble_x_aspect_ratio(config):
@@ -70,8 +70,8 @@ def add_unknown_field(config):
     config["instagram"]["caption"]["max_emojis"] = 3
 
 
-def remove_linkedin_style(config):
-    del config["linkedin"]["style"]
+def remove_facebook_style(config):
+    del config["facebook"]["style"]
 
 
 def unknown_x_length_counting(config):
@@ -83,10 +83,10 @@ def unknown_x_length_counting(config):
     [
         (remove_x_caption_limit, ["x.caption.max_chars", "Field required"]),
         (zero_instagram_caption_limit, ["instagram.caption.max_chars", "greater than 0"]),
-        (stretch_linkedin_width, ["linkedin.image", "1600x704", "aspect_ratio 1.91:1"]),
+        (stretch_facebook_width, ["facebook.image", "1600x1024", "aspect_ratio 1:1"]),
         (garble_x_aspect_ratio, ["x.image.aspect_ratio", "'16x9'"]),
         (add_unknown_field, ["instagram.caption.max_emojis", "Extra inputs are not permitted"]),
-        (remove_linkedin_style, ["linkedin.style", "Field required"]),
+        (remove_facebook_style, ["facebook.style", "Field required"]),
         (unknown_x_length_counting, ["x.caption.length_counting", "'characters' or 'x_weighted'"]),
     ],
 )

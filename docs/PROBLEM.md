@@ -35,6 +35,6 @@ These are our working assumptions. If anything here conflicts with the official 
 - Publishing uses **mock** channel adapters; no real social media APIs.
 - Metrics are **synthetic** (seeded, platform-realistic), ingested through each adapter.
 - Image generation alone satisfies "image/video"; video is optional and the first thing cut if time runs short.
-- Channels: Instagram, LinkedIn, X.
+- Channels: Instagram, Facebook, X. (LinkedIn was dropped while Gemini images were planned, since its 1.91:1 ratio isn't one Gemini produces; the statement doesn't require it.)
 - "Like-for-like" means the same brief's posts compared across channels using normalized rates (e.g. engagement rate), not raw totals.
 - "Reach brief creation" means insights are both visible on the brief form and injected into the generation prompt.

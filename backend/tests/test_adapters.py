@@ -72,11 +72,11 @@ def test_a_ratio_inside_the_tolerance_is_accepted():
 
 
 def test_a_file_over_the_size_limit_is_rejected_not_recompressed():
-    spec = SPECS["linkedin"].image
-    padded = native_image("linkedin") + b"\0" * spec.max_file_size_bytes  # still a valid JPEG, just too big
-    post = submission("linkedin", image_bytes=padded)
+    spec = SPECS["x"].image
+    padded = native_image("x") + b"\0" * spec.max_file_size_bytes  # still a valid JPEG, just too big
+    post = submission("x", image_bytes=padded)
 
-    reasons = rejection_reasons("linkedin", post)
+    reasons = rejection_reasons("x", post)
 
     assert len(reasons) == 1 and f"the limit is {spec.max_file_size_mb:g} MB" in reasons[0]
     assert post.image_bytes == padded
@@ -84,7 +84,7 @@ def test_a_file_over_the_size_limit_is_rejected_not_recompressed():
 
 def test_hashtags_are_counted_where_the_platform_sees_them_including_inline():
     limit = SPECS["x"].caption.max_hashtags
-    post = submission("x", caption="Eid is here #EidMubarak #Dhaka", hashtags=("Eid",))
+    post = submission("x", caption="Eid is here #EidMubarak #Kolkata", hashtags=("Eid",))
 
     reasons = rejection_reasons("x", post)
 

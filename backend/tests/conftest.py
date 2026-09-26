@@ -104,9 +104,9 @@ def client(
 @pytest.fixture
 def brief(session: Session) -> Brief:
     test_brief = Brief(
-        title="Pohela Boishakh sale",
+        title="Poila Baishakh sale",
         goal="Drive visits to the new-year collection",
-        audience="Young professionals in Dhaka",
+        audience="Young professionals in Kolkata",
         languages=[Language.BENGALI, Language.ENGLISH],
         tone="warm, festive",
     )

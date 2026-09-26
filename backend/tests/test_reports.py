@@ -12,10 +12,18 @@ import pytest
 from app.models import Insight, Language, Metric, PostStatus, Report
 from app.post_status import transition
 from app.prompts import BENGALI_COPY_OPENING, CopySet, SceneSet
-from app.reporting import MAX_REPORT_ATTEMPTS, ReportClaim, ReportDraft, citation_problems
+from app.reporting import MAX_REPORT_ATTEMPTS, ReportClaim, ReportDraft, citation_problems, comparison_problems
 from tests.conftest import TEST_NOW
 
 UNKNOWN_POST_ID = 999_999
+CHANNEL_NAMES = {"instagram": "Instagram", "facebook": "Facebook", "x": "X"}
+# Post id -> (channel, language), for the like-for-like check.
+SLOTS = {
+    1: ("instagram", Language.BENGALI),
+    2: ("instagram", Language.ENGLISH),
+    3: ("facebook", Language.BENGALI),
+    4: ("facebook", Language.ENGLISH),
+}
 
 
 @pytest.fixture
@@ -82,6 +90,40 @@ def test_an_id_mentioned_only_in_the_text_is_checked_too():
     ]
 
 
+# ---------------------------------------------------------------- like-for-like comparisons
+
+
+@pytest.mark.parametrize(
+    ("post_ids", "listed"),
+    [
+        ((1, 4), "Instagram Bengali #1, Facebook English #4"),
+        ((1, 2, 3), "Instagram Bengali #1, Instagram English #2, Facebook Bengali #3"),
+    ],
+    ids=["different channel and language", "one channel missing a language"],
+)
+def test_a_claim_mixing_channels_and_languages_is_a_problem(post_ids, listed):
+    problems = comparison_problems(report_citing(*post_ids), SLOTS, CHANNEL_NAMES)
+
+    assert [problem.split(" compares")[0] for problem in problems] == ["finding 1", "insight 1"]
+    assert f"differ in both channel and language ({listed})" in problems[0]
+
+
+@pytest.mark.parametrize(
+    "post_ids",
+    [(1, 3), (1, 2), (1, 2, 3, 4)],
+    ids=["channels within one language", "languages within one channel", "every channel in every language"],
+)
+def test_like_for_like_comparisons_pass(post_ids):
+    assert comparison_problems(report_citing(*post_ids), SLOTS, CHANNEL_NAMES) == []
+
+
+def test_the_summary_may_cite_every_post_of_the_week():
+    draft = report_citing(1)
+    draft.summary = claim("Two posts went out this week.", 1, 4)
+
+    assert comparison_problems(draft, SLOTS, CHANNEL_NAMES) == []
+
+
 # ---------------------------------------------------------------- generating reports
 
 
@@ -122,6 +164,40 @@ def test_rule_5_a_made_up_citation_makes_the_model_rewrite_the_report(client, fa
     calls = fake_text.report_calls()
     assert len(calls) == 2
     assert f"cites #{UNKNOWN_POST_ID}, which is not a post in this week's data" in calls[1].prompt
+
+
+def test_the_prompt_sets_each_briefs_posts_side_by_side_per_language(client, fake_text, week_of_posts):
+    instagram_bengali, instagram_english, x_english = (post.id for post in week_of_posts)
+
+    client.post("/reports")
+
+    prompt = fake_text.report_calls()[0].prompt
+    assert (
+        f"Bengali: Instagram #{instagram_bengali} engagement rate 6.00%, click-through rate 0.60%; "
+        "Facebook no post this week; X no post this week"
+    ) in prompt
+    assert f"English: Instagram #{instagram_english} engagement rate 3.75%" in prompt
+    assert f"Facebook no post this week; X #{x_english} engagement rate 1.20%" in prompt
+
+
+def test_a_comparison_mixing_channel_and_language_makes_the_model_rewrite_the_report(
+    client, fake_text, week_of_posts
+):
+    instagram_bengali, instagram_english, x_english = (post.id for post in week_of_posts)
+    fake_text.report_versions = [
+        report_citing(instagram_bengali, x_english),
+        report_citing(instagram_bengali, instagram_english),
+    ]
+
+    response = client.post("/reports")
+
+    assert response.status_code == 201
+    calls = fake_text.report_calls()
+    assert len(calls) == 2
+    assert (
+        f"finding 1 compares posts that differ in both channel and language "
+        f"(Instagram Bengali #{instagram_bengali}, X English #{x_english})"
+    ) in calls[1].prompt
 
 
 def test_rule_5_a_report_that_never_cites_correctly_is_not_saved(client, session, fake_text, week_of_posts):
@@ -179,7 +255,7 @@ def test_reports_are_listed_newest_first(client, week_of_posts):
 BRIEF_WITH_INSIGHTS = {
     "title": "Eid family collection",
     "goal": "Bring families to the store",
-    "audience": "Parents in Dhaka",
+    "audience": "Parents in Kolkata",
     "tone": "warm",
 }
 

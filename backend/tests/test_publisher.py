@@ -89,8 +89,8 @@ def test_a_missing_image_file_is_rejected(session, media_dir, make_publishable_p
 
 
 def test_one_rejected_post_does_not_hold_up_the_others(session, media_dir, make_publishable_post):
-    bad = make_publishable_post(channel="linkedin", image_bytes=make_jpeg(1024, 1024))
-    good = make_publishable_post(channel="linkedin")
+    bad = make_publishable_post(channel="facebook", image_bytes=make_jpeg(1600, 900))  # wide, not square
+    good = make_publishable_post(channel="facebook")
 
     run = publish(session, media_dir)
 

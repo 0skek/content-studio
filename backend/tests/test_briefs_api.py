@@ -8,9 +8,9 @@ from app.dependencies import get_generation_clients
 
 SPECS = get_channel_specs()
 BRIEF_BODY = {
-    "title": "Pohela Boishakh collection",
+    "title": "Poila Baishakh collection",
     "goal": "Drive visits to the new-year collection",
-    "audience": "Young professionals in Dhaka",
+    "audience": "Young professionals in Kolkata",
     "tone": "warm, festive",
     "languages": ["bn", "en"],
 }

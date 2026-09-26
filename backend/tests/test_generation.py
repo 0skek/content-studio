@@ -26,6 +26,8 @@ from app import generation_service
 from app.headline_overlay import DEFAULT_TEXT_ZONE, TextZone
 from app.prompts import (
     BENGALI_COPY_OPENING,
+    BENGALI_NAME_SPELLING_RULE,
+    ENGLISH_NAME_SPELLING_RULE,
     HEADLINE_MAX_WORDS,
     HEADLINE_ZONE_CLAUSES,
     NO_TEXT_CLAUSE,
@@ -39,9 +41,9 @@ from app.schemas import BriefCreate
 from tests.fakes import FAKE_TEXT_ZONE, default_copy, fake_scene
 
 BRIEF_INPUT = BriefCreate(
-    title="Pohela Boishakh collection",
+    title="Poila Baishakh collection",
     goal="Drive visits to the new-year collection",
-    audience="Young professionals in Dhaka",
+    audience="Young professionals in Kolkata",
     tone="warm, festive",
 )
 SPECS = get_channel_specs()
@@ -204,7 +206,8 @@ def test_copy_is_written_for_each_channels_photo(generate, fake_text):
 def test_the_headline_zone_the_scene_chose_reaches_the_image_prompt_and_the_overlay(
     generate, fake_text, fake_images, monkeypatch
 ):
-    fake_text.scene_zones = {"x": "left", "linkedin": "Right ", "instagram": "left"}  # instagram is too narrow
+    # Only wide images take a zone beside the subject: square facebook and tall instagram fall back.
+    fake_text.scene_zones = {"x": "Right ", "facebook": "left", "instagram": "left"}
     overlaid_zones = {}
     real_overlay = generation_service.overlay_headline
 
@@ -217,7 +220,7 @@ def test_the_headline_zone_the_scene_chose_reaches_the_image_prompt_and_the_over
 
     generate()
 
-    expected = {"x": TextZone.LEFT, "linkedin": TextZone.RIGHT, "instagram": DEFAULT_TEXT_ZONE}
+    expected = {"x": TextZone.RIGHT, "facebook": DEFAULT_TEXT_ZONE, "instagram": DEFAULT_TEXT_ZONE}
     prompts = {(call.width, call.height): call.prompt for call in fake_images.calls}
     for channel, zone in expected.items():
         size = (SPECS[channel].image.width, SPECS[channel].image.height)
@@ -272,13 +275,13 @@ def test_copy_still_over_limit_after_the_retry_fails_only_that_post(generate, fa
 
 
 def test_image_failure_fails_only_that_channels_posts(generate, fake_images):
-    linkedin = SPECS["linkedin"].image
-    fake_images.errors[(linkedin.width, linkedin.height)] = ImageGenerationError("Cloudflare timed out after 90s")
+    facebook = SPECS["facebook"].image
+    fake_images.errors[(facebook.width, facebook.height)] = ImageGenerationError("Cloudflare timed out after 90s")
 
     posts = generate()
 
     for (channel, _language), post in posts.items():
-        if channel == "linkedin":
+        if channel == "facebook":
             assert post.generation_status == GenerationStatus.FAILED
             assert post.generation_error == "Cloudflare timed out after 90s"
         else:
@@ -318,12 +321,55 @@ def test_an_unexpected_crash_never_leaves_posts_generating(generate, fake_images
 
 def test_hashtags_are_cleaned_up(generate, fake_text):
     fake_text.copy_versions[(Language.ENGLISH, "instagram")] = [
-        ChannelCopy(channel="instagram", headline="Hi", caption="Hello", hashtags=["#Pohela Boishakh", "Dhaka", "", "#Dhaka"])
+        ChannelCopy(channel="instagram", headline="Hi", caption="Hello", hashtags=["#Poila Baishakh", "Kolkata", "", "#Kolkata"])
     ]
 
     posts = generate()
 
-    assert posts[("instagram", Language.ENGLISH)].hashtags == ["PohelaBoishakh", "Dhaka"]
+    assert posts[("instagram", Language.ENGLISH)].hashtags == ["PoilaBaishakh", "Kolkata"]
+
+
+def test_extra_hashtags_are_trimmed_to_the_channel_limit_without_a_retry(generate, fake_text):
+    limit = SPECS["x"].caption.max_hashtags
+    tags = [f"tag{number}" for number in range(limit + 2)]
+    fake_text.copy_versions[(Language.ENGLISH, "x")] = [
+        ChannelCopy(channel="x", headline="Hi", caption="Visit us this week", hashtags=tags)
+    ]
+
+    posts = generate()
+
+    post = posts[("x", Language.ENGLISH)]
+    assert post.generation_status == GenerationStatus.READY
+    assert post.hashtags == tags[:limit]  # the model's first tags are kept
+    assert len(fake_text.copy_calls(Language.ENGLISH)) == 1  # no quota spent on a retry
+
+
+def test_hashtag_lines_at_the_end_of_the_caption_move_into_the_hashtags(generate, fake_text):
+    fake_text.copy_versions[(Language.ENGLISH, "facebook")] = [
+        ChannelCopy(
+            channel="facebook", headline="Hi", caption="Visit us this week.\n\n#Eid #Kolkata\n", hashtags=["eid", "Craft"]
+        )
+    ]
+
+    posts = generate()
+
+    post = posts[("facebook", Language.ENGLISH)]
+    assert post.caption == "Visit us this week."
+    assert post.hashtags == ["eid", "Craft", "Kolkata"]  # counted once, ignoring case
+
+
+def test_hashtags_inside_sentences_are_never_removed(generate, fake_text):
+    limit = SPECS["x"].caption.max_hashtags
+    caption = "Celebrate " + " and ".join(f"#word{number}" for number in range(limit + 1)) + " with us"
+    fake_text.copy_versions[(Language.ENGLISH, "x")] = [
+        ChannelCopy(channel="x", headline="Hi", caption=caption, hashtags=["extra"])
+    ]
+
+    posts = generate()
+
+    post = posts[("x", Language.ENGLISH)]
+    assert post.generation_status == GenerationStatus.FAILED
+    assert f"{limit + 1} hashtags; the limit is {limit}" in post.generation_error
 
 
 def test_interrupted_generation_is_marked_failed_on_startup(session, brief):
@@ -364,9 +410,9 @@ def test_copy_within_limits_has_no_problems(language):
 
 BENGALI_X_COPY = ChannelCopy(
     channel="x",
-    headline="পহেলা বৈশাখ কালেকশন",
+    headline="পয়লা বৈশাখ কালেকশন",
     caption="নতুন বছরের দেশি পোশাকের সংগ্রহ দেখতে আজই আমাদের বুটিকে চলে আসুন।",
-    hashtags=["PohelaBoishakh"],
+    hashtags=["PoilaBaishakh"],
 )
 
 
@@ -388,14 +434,14 @@ def test_bengali_post_written_in_english_is_a_problem():
     ("copy", "language"),
     [
         (
-            ChannelCopy(channel="x", headline="Aarong-এ নতুন বৈশাখী সাজ", caption="Aarong-এ আসুন, নতুন সাজে সাজুন", hashtags=[]),
+            ChannelCopy(channel="x", headline="Biba-তে নতুন বৈশাখী সাজ", caption="Biba-তে আসুন, নতুন সাজে সাজুন", hashtags=[]),
             Language.BENGALI,
         ),
         (
-            ChannelCopy(channel="x", headline="Shubho Noboborsho", caption="Happy new year to all of Dhaka! শুভ", hashtags=[]),
+            ChannelCopy(channel="x", headline="Shubho Noboborsho", caption="Happy new year to all of Kolkata! শুভ", hashtags=[]),
             Language.ENGLISH,
         ),
-        (ChannelCopy(channel="x", headline="New colours", caption="Visit us", hashtags=["পহেলাবৈশাখ"]), Language.ENGLISH),
+        (ChannelCopy(channel="x", headline="New colours", caption="Visit us", hashtags=["পয়লাবৈশাখ"]), Language.ENGLISH),
     ],
     ids=["bengali-with-latin-brand", "english-with-bengali-greeting", "hashtags-are-exempt"],
 )
@@ -432,3 +478,13 @@ def test_copy_prompts_insist_on_their_own_language(language):
 
     expected = "in English, even if the brief" if language == Language.ENGLISH else "ব্রিফ ইংরেজিতে লেখা থাকলেও"
     assert expected in prompt
+
+
+@pytest.mark.parametrize("language", list(Language))
+def test_copy_prompts_keep_the_briefs_spelling_of_names(language):
+    context = BriefContext(title="t", goal="গড়িয়াহাটের দোকানে ভিড় আনা", audience="a", tone="warm")
+
+    prompt = copy_prompt(context, language, SPECS, scenes={"x": "Inside our Gariahat shop"})
+
+    rule = ENGLISH_NAME_SPELLING_RULE if language == Language.ENGLISH else BENGALI_NAME_SPELLING_RULE
+    assert rule in prompt

@@ -1,11 +1,16 @@
 import { api, type TakenDown } from './api'
+import type { Confirm } from './confirm'
 
 // Asks first, then takes the post down. Returns null if the user cancelled.
-export async function confirmAndTakeDown(postId: number, channelName: string): Promise<TakenDown | null> {
-  const confirmed = window.confirm(
-    `Take post #${postId} down from ${channelName}?\n\nIt leaves the feed, its metrics are cleared, and it goes back to ` +
-      'Approved so you can schedule it again. Weekly reports citing it are deleted.',
-  )
+export async function confirmAndTakeDown(postId: number, channelName: string, confirm: Confirm): Promise<TakenDown | null> {
+  const confirmed = await confirm({
+    title: `Take post #${postId} down from ${channelName}?`,
+    body:
+      'It leaves the feed, its metrics are cleared, and it goes back to Approved so you can schedule it again. ' +
+      'Weekly reports citing it are deleted.',
+    confirmLabel: 'Take down',
+    tone: 'danger',
+  })
   return confirmed ? api.takeDownPost(postId) : null
 }
 

@@ -11,9 +11,9 @@ from app.prompts import CopySet
 
 SPECS = get_channel_specs()
 BRIEF_BODY = {
-    "title": "Pohela Boishakh collection",
+    "title": "Poila Baishakh collection",
     "goal": "Drive visits to the new-year collection",
-    "audience": "Young professionals in Dhaka",
+    "audience": "Young professionals in Kolkata",
     "tone": "warm, festive",
 }
 
@@ -68,7 +68,7 @@ def test_approving_a_post_that_is_not_a_draft_is_refused(client, make_post_in_st
 
 
 def test_discarding_a_draft(client):
-    post = create_generated_brief(client)[("linkedin", "en")]
+    post = create_generated_brief(client)[("facebook", "en")]
 
     response = client.post(f"/posts/{post['id']}/discard")
 
@@ -118,9 +118,9 @@ def test_retrying_a_discarded_post_regenerates_only_that_post(client, fake_image
 
 
 def test_retrying_a_failed_draft_discards_it_first(client, fake_images):
-    linkedin = SPECS["linkedin"].image
-    fake_images.errors[(linkedin.width, linkedin.height)] = RuntimeError("Cloudflare is down")
-    failed = create_generated_brief(client)[("linkedin", "bn")]
+    facebook = SPECS["facebook"].image
+    fake_images.errors[(facebook.width, facebook.height)] = RuntimeError("Cloudflare is down")
+    failed = create_generated_brief(client)[("facebook", "bn")]
     assert failed["generation_status"] == GenerationStatus.FAILED
     fake_images.errors.clear()
 
@@ -194,7 +194,7 @@ def test_unknown_post_is_404(client, action):
 
 
 def test_languages_of_the_slot_are_kept(client):
-    post = create_generated_brief(client)[("linkedin", "bn")]
+    post = create_generated_brief(client)[("facebook", "bn")]
     client.post(f"/posts/{post['id']}/discard")
 
     retry = client.post(f"/posts/{post['id']}/retry").json()

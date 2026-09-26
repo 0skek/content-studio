@@ -69,9 +69,9 @@ def submit(client, channel: str, caption: str, image: bytes, hashtags: str = "Ei
 
 
 def test_bench_accepts_a_post_within_limits(client):
-    spec = SPECS["linkedin"].image
+    spec = SPECS["facebook"].image
 
-    response = submit(client, "linkedin", "Eid outfits for the whole family", make_jpeg(spec.width, spec.height))
+    response = submit(client, "facebook", "Eid outfits for the whole family", make_jpeg(spec.width, spec.height))
 
     body = response.json()
     assert response.status_code == 200

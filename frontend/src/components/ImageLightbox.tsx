@@ -1,4 +1,5 @@
 import { useEffect, useRef, useState, type MouseEvent } from 'react'
+import { ArrowSquareOut, X } from '@phosphor-icons/react'
 
 interface ImageLightboxProps {
   src: string
@@ -38,15 +39,15 @@ export function ImageLightbox({ src, alt, title, onClose }: ImageLightboxProps) 
         <img src={src} alt={alt} title={`Click for ${toggleLabel.toLowerCase()}`} onClick={() => setActualSize(!actualSize)} />
       </div>
       <div className="lightbox-bar">
-        <span>{title}</span>
-        <button type="button" onClick={() => setActualSize(!actualSize)}>
+        <span className="lightbox-title mono">{title}</span>
+        <button type="button" className="btn btn-ghost btn-sm" onClick={() => setActualSize(!actualSize)}>
           {toggleLabel}
         </button>
-        <a href={src} target="_blank" rel="noreferrer">
-          Open in new tab
+        <a className="btn btn-ghost btn-sm" href={src} target="_blank" rel="noreferrer">
+          <ArrowSquareOut size={14} aria-hidden="true" /> Open in new tab
         </a>
-        <button type="button" onClick={onClose}>
-          Close
+        <button type="button" className="btn btn-secondary btn-sm" onClick={onClose}>
+          <X size={14} aria-hidden="true" /> Close
         </button>
       </div>
     </dialog>

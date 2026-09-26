@@ -85,7 +85,7 @@ def test_nothing_before_publishing():
 
 
 def test_platforms_have_their_own_shape():
-    """Over many posts: LinkedIn engages and clicks most, X engages least, Instagram reaches furthest."""
+    """Over many posts: Facebook clicks most, X engages least, Instagram reaches furthest and engages most."""
     averages = {}
     for channel in SPECS:
         week = [metrics_after(facts(post_id=post_id, channel=channel), A_WEEK) for post_id in SAMPLE_POSTS]
@@ -95,18 +95,18 @@ def test_platforms_have_their_own_shape():
             "clicks": mean(click_rate(values) for values in week),
         }
 
-    assert averages["x"]["engagement"] < averages["linkedin"]["engagement"] < averages["instagram"]["engagement"]
-    assert max(averages, key=lambda channel: averages[channel]["clicks"]) == "linkedin"
+    assert averages["x"]["engagement"] < averages["facebook"]["engagement"] < averages["instagram"]["engagement"]
+    assert max(averages, key=lambda channel: averages[channel]["clicks"]) == "facebook"
     assert max(averages, key=lambda channel: averages[channel]["reach"]) == "instagram"
 
 
-def test_x_reaches_its_audience_within_hours_linkedin_over_days():
-    x, linkedin = facts(channel="x"), facts(channel="linkedin")
+def test_x_reaches_its_audience_within_hours_facebook_over_a_day():
+    x, facebook = facts(channel="x"), facts(channel="facebook")
 
     x_share = metrics_after(x, timedelta(hours=12)).impressions / metrics_after(x, A_WEEK).impressions
-    linkedin_share = metrics_after(linkedin, timedelta(hours=12)).impressions / metrics_after(linkedin, A_WEEK).impressions
+    facebook_share = metrics_after(facebook, timedelta(hours=12)).impressions / metrics_after(facebook, A_WEEK).impressions
 
-    assert x_share > 0.9 > 0.5 > linkedin_share
+    assert x_share > 0.9 > 0.5 > facebook_share
 
 
 def pattern(channel):
@@ -122,13 +122,13 @@ def test_pattern_bengali_does_better_on_instagram():
     assert ratio == pytest.approx(pattern("instagram").engagement_factor, rel=PATTERN_TOLERANCE)
 
 
-def test_pattern_linkedin_posts_with_many_hashtags_do_worse():
-    few = metrics_after(facts(channel="linkedin", hashtags=("Eid", "Dhaka", "Family")), A_WEEK)
-    many = metrics_after(facts(channel="linkedin", hashtags=("Eid", "Dhaka", "Family", "Fashion")), A_WEEK)
+def test_pattern_facebook_posts_with_many_hashtags_do_worse():
+    few = metrics_after(facts(channel="facebook", hashtags=("Eid", "Kolkata", "Family")), A_WEEK)
+    many = metrics_after(facts(channel="facebook", hashtags=("Eid", "Kolkata", "Family", "Fashion")), A_WEEK)
 
     ratio = engagement_rate(many) / engagement_rate(few)
 
-    assert ratio == pytest.approx(pattern("linkedin").engagement_factor, rel=PATTERN_TOLERANCE)
+    assert ratio == pytest.approx(pattern("facebook").engagement_factor, rel=PATTERN_TOLERANCE)
 
 
 def test_pattern_short_x_posts_get_more_clicks():

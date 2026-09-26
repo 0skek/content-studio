@@ -1,4 +1,5 @@
 import { useEffect, useState } from 'react'
+import { ArrowRight, CheckCircle, FileText, Trash } from '@phosphor-icons/react'
 import {
   api,
   errorText,
@@ -11,7 +12,8 @@ import {
   type Report,
   type ReportClaim,
 } from '../api'
-import { formatCount, formatRate } from '../format'
+import { useConfirm } from '../confirm'
+import { formatCount, formatRate, splitLead } from '../format'
 import { GroupedBarChart, type ChartSeries, type ChartValue } from './charts/GroupedBarChart'
 
 const LANGUAGE_LABELS: Record<Language, string> = { bn: 'Bengali', en: 'English' }
@@ -48,12 +50,6 @@ function percent(rate: number): string {
   return formatRate(rate)
 }
 
-// "First sentence. The rest." -> a bold lead sentence, so each finding can be skimmed.
-function splitLead(text: string): [string, string] {
-  const match = text.trim().match(/^(.+?[.!?])\s+(.+)$/s)
-  return match ? [match[1], match[2]] : [text.trim(), '']
-}
-
 function pooledRate(posts: EvidencePost[], pick: (post: EvidencePost) => number): number | null {
   const impressions = posts.reduce((sum, post) => sum + post.impressions, 0)
   return impressions > 0 ? posts.reduce((sum, post) => sum + pick(post), 0) / impressions : null
@@ -64,6 +60,16 @@ function groupValue(group: EvidenceGroup | undefined, rate: 'engagement_rate' | 
   if (!group || value === null || value === undefined) return null
   const posts = group.post_ids.length
   return { value, detail: `${posts} post${posts === 1 ? '' : 's'} · ${formatCount(group.impressions)} impressions` }
+}
+
+// A claim with several sentences gets a bold lead; a one-sentence claim stays plain, so nothing is all bold.
+function LeadText({ lead, rest }: { lead: string; rest: string }) {
+  if (!rest) return <span className="claim-text">{lead}</span>
+  return (
+    <>
+      <strong>{lead}</strong> {rest}
+    </>
+  )
 }
 
 function Citations({ claim, postsById }: { claim: ReportClaim; postsById: Map<number, EvidencePost> }) {
@@ -223,14 +229,17 @@ function ReportCard({ report, channels, onDelete }: { report: Report; channels: 
     <article className="report-card">
       <header className="report-head">
         <div>
-          <h3>Weekly report #{report.id}</h3>
-          <p className="muted small">
-            Week from {report.week_start} · cites {report.cited_post_ids.length} posts, every one checked against the
-            week's published posts
+          <p className="eyebrow">
+            <span className="mono">Report #{report.id}</span> · week from {report.week_start}
+          </p>
+          <h2>Weekly report</h2>
+          <p className="citation-check">
+            <CheckCircle size={16} weight="fill" aria-hidden="true" />
+            Cites {report.cited_post_ids.length} posts, every one checked in code against the week's published posts
           </p>
         </div>
-        <button type="button" className="delete-button" onClick={() => onDelete(report)}>
-          Delete report
+        <button type="button" className="btn btn-ghost btn-sm btn-danger-ghost" onClick={() => onDelete(report)}>
+          <Trash size={14} aria-hidden="true" /> Delete report
         </button>
       </header>
 
@@ -246,13 +255,13 @@ function ReportCard({ report, channels, onDelete }: { report: Report; channels: 
       {report.evidence && <Charts evidence={report.evidence} channels={channels} />}
 
       <section className="report-section">
-        <h4>Findings</h4>
+        <h3>Findings</h3>
         <ol className="findings">
           {findings.map((finding) => {
             const [lead, rest] = splitLead(finding.text)
             return (
               <li key={finding.text}>
-                <strong>{lead}</strong> {rest} <Citations claim={finding} postsById={postsById} />
+                <LeadText lead={lead} rest={rest} /> <Citations claim={finding} postsById={postsById} />
               </li>
             )
           })}
@@ -260,23 +269,23 @@ function ReportCard({ report, channels, onDelete }: { report: Report; channels: 
       </section>
 
       <section className="report-section do-next">
-        <h4>Do next: insights for the next brief</h4>
+        <h3>Do next: insights for the next brief</h3>
         <ul>
           {insights.map((insight) => {
             const [lead, rest] = splitLead(insight.text)
             return (
               <li key={insight.text}>
                 <span className="do-next-icon" aria-hidden="true">
-                  →
+                  <ArrowRight size={16} weight="bold" />
                 </span>
                 <span>
-                  <strong>{lead}</strong> {rest} <Citations claim={insight} postsById={postsById} />
+                  <LeadText lead={lead} rest={rest} /> <Citations claim={insight} postsById={postsById} />
                 </span>
               </li>
             )
           })}
         </ul>
-        <p className="muted small">These appear on the New brief form, ticked, and go into the generation prompts.</p>
+        <p className="section-note">These appear on the New brief form, ticked, and go into the generation prompts.</p>
       </section>
 
       <EvidenceTable report={report} channelName={channelName} />
@@ -314,6 +323,7 @@ function GeneratingPanel({ startedAt }: { startedAt: number }) {
 
 // Weekly AI-written reports. Their insights appear on the brief form and go into the next brief's prompts.
 export function ReportsView({ channels, reportsVersion, visible, onReportsChanged, onGeneratingChange }: ReportsViewProps) {
+  const confirm = useConfirm()
   const [reports, setReports] = useState<Report[] | null>(null)
   const [startedAt, setStartedAt] = useState<number | null>(null)
   const [error, setError] = useState<string | null>(null)
@@ -327,10 +337,12 @@ export function ReportsView({ channels, reportsVersion, visible, onReportsChange
   }, [reportsVersion, visible])
 
   async function deleteReport(report: Report) {
-    const confirmed = window.confirm(
-      `Delete weekly report #${report.id}?\n\nIts ${report.insights.length} insights stop being offered on the brief form. ` +
-        'Briefs that already applied them keep them.',
-    )
+    const confirmed = await confirm({
+      title: `Delete weekly report #${report.id}?`,
+      body: `Its ${report.insights.length} insights stop being offered on the New brief form. Briefs that already applied them keep them.`,
+      confirmLabel: 'Delete report',
+      tone: 'danger',
+    })
     if (!confirmed) return
     try {
       await api.deleteReport(report.id)
@@ -359,42 +371,58 @@ export function ReportsView({ channels, reportsVersion, visible, onReportsChange
 
   const generating = startedAt !== null
   return (
-    <section className="reports">
-      <header className="reports-header">
+    <section className="page reports">
+      <header className="page-head page-head-split">
         <div>
-          <h2>Weekly reports</h2>
-          <p className="muted">
-            Written by the AI from the last 7 days of published posts (demo clock). Every claim cites post IDs, checked
-            in code. Insights feed the next brief.
+          <p className="eyebrow">Insights</p>
+          <h1>Weekly reports</h1>
+          <p className="lede">
+            Written by the text model from the last 7 days of published posts on the demo clock. Every claim cites post
+            IDs, checked in code, and the insights feed the next brief.
           </p>
         </div>
-        <button type="button" className="generate-report" disabled={generating} onClick={generate}>
+        <button type="button" className="btn btn-primary btn-lg" disabled={generating} onClick={generate}>
           {generating ? (
             <>
-              <span className="button-spinner" aria-hidden="true" /> Writing…
+              <span className="spinner" aria-hidden="true" /> Writing…
             </>
           ) : (
-            'Generate this week’s report'
+            <>
+              <FileText size={18} aria-hidden="true" /> Write this week’s report
+            </>
           )}
         </button>
       </header>
 
       {generating && <GeneratingPanel startedAt={startedAt} />}
       {error && (
-        <div className="report-error" role="alert">
+        <div className="form-error report-error" role="alert">
           <strong>The report could not be written.</strong> {error}
         </div>
       )}
-      {reports && reports.length === 0 && !generating && <p className="muted">No reports yet.</p>}
+      {reports === null && !error && <div className="report-skeleton skeleton" aria-hidden="true" />}
+      {reports && reports.length === 0 && !generating && (
+        <div className="empty-panel">
+          <FileText size={32} aria-hidden="true" />
+          <h2>No reports yet</h2>
+          <p>
+            Publish a few posts and move the demo clock forward so they collect metrics, then write the week’s report.
+          </p>
+        </div>
+      )}
       <div className={generating ? 'reports-list refreshing' : 'reports-list'}>
         {reports && reports.length > 0 && <ReportCard report={reports[0]} channels={channels} onDelete={deleteReport} />}
         {reports && reports.length > 1 && (
           <section className="older-reports">
-            <h3>Earlier reports</h3>
+            <h2 className="older-title">Earlier reports</h2>
             {reports.slice(1).map((report) => (
               <details key={report.id} className="older-report">
                 <summary>
-                  Weekly report #{report.id} · week from {report.week_start} · {report.content.findings.length} findings
+                  <span className="mono">#{report.id}</span>
+                  <span>Week from {report.week_start}</span>
+                  <span className="muted">
+                    {report.content.findings.length} findings · {report.cited_post_ids.length} posts cited
+                  </span>
                 </summary>
                 <ReportCard report={report} channels={channels} onDelete={deleteReport} />
               </details>

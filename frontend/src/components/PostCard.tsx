@@ -1,23 +1,61 @@
 import { useState } from 'react'
-import { api, errorText, type Channel, type Language, type Post, type TakenDown } from '../api'
-import { formatTime } from '../format'
+import {
+  ArrowCounterClockwise,
+  Broadcast,
+  CalendarBlank,
+  Check,
+  MagnifyingGlassPlus,
+  WarningCircle,
+  X,
+} from '@phosphor-icons/react'
+import { api, errorText, type Channel, type Language, type Post, type PostStatus, type TakenDown } from '../api'
+import { useConfirm } from '../confirm'
+import { formatCount, formatTime } from '../format'
 import { confirmAndTakeDown } from '../takeDown'
 import { ImageLightbox } from './ImageLightbox'
 
 const LANGUAGE_LABELS: Record<Language, string> = { bn: 'বাংলা', en: 'English' }
+const STATUS_LABELS: Record<PostStatus, string> = {
+  draft: 'Draft',
+  approved: 'Approved',
+  discarded: 'Discarded',
+  scheduled: 'Scheduled',
+  published: 'Published',
+  rejected: 'Rejected',
+}
 const BYTES_PER_KILOBYTE = 1024
 const BYTES_PER_MEGABYTE = BYTES_PER_KILOBYTE * 1024
 const MILLISECONDS_PER_HOUR = 60 * 60 * 1000
 // Scheduling options, measured from the demo clock's "now" (which includes any fast-forward).
 const SCHEDULE_OPTIONS = [
-  { label: 'now', hours: 0 },
-  { label: 'in 1 hour', hours: 1 },
-  { label: 'in 1 day', hours: 24 },
+  { label: 'Now', hours: 0 },
+  { label: 'In 1 hour', hours: 1 },
+  { label: 'In 1 day', hours: 24 },
 ]
+// A meter turns amber past this share of its limit, so a near miss is visible before the adapter sees it.
+const NEAR_LIMIT_SHARE = 0.9
 
 function formatFileSize(bytes: number): string {
   if (bytes >= BYTES_PER_MEGABYTE) return `${(bytes / BYTES_PER_MEGABYTE).toFixed(1)} MB`
   return `${Math.round(bytes / BYTES_PER_KILOBYTE)} KB`
+}
+
+function Meter({ label, value, limit }: { label: string; value: number; limit: number }) {
+  const share = limit > 0 ? Math.min(1, value / limit) : 1
+  const level = value > limit ? 'over' : share >= NEAR_LIMIT_SHARE ? 'near' : 'ok'
+  return (
+    <div className={`meter meter-${level}`}>
+      <span className="meter-text">
+        <span className="mono">
+          {formatCount(value)}/{formatCount(limit)}
+        </span>{' '}
+        {label}
+      </span>
+      <span className="meter-track" aria-hidden="true">
+        <span className="meter-fill" style={{ width: `${share * 100}%` }} />
+      </span>
+    </div>
+  )
 }
 
 interface PostCardProps {
@@ -32,20 +70,23 @@ interface PostCardProps {
 }
 
 export function PostCard({ post, channel, earlierVersions, onChanged, onTakenDown }: PostCardProps) {
+  const confirm = useConfirm()
   const [enlargedPost, setEnlargedPost] = useState<Post | null>(null)
   const [busy, setBusy] = useState(false)
   const [actionError, setActionError] = useState<string | null>(null)
   const [scheduleHours, setScheduleHours] = useState(SCHEDULE_OPTIONS[1].hours)
 
-  const lengthUnit = channel.length_counting === 'x_weighted' ? 'weighted characters' : 'characters'
-  const isReadyDraft = post.status === 'draft' && post.generation_status === 'ready'
-  const canRetry = post.status === 'discarded' || (post.status === 'draft' && post.generation_status === 'failed')
+  const lengthUnit = channel.length_counting === 'x_weighted' ? 'weighted chars' : 'chars'
+  const ready = post.generation_status === 'ready'
+  const failed = post.generation_status === 'failed'
+  const isReadyDraft = post.status === 'draft' && ready
+  const canRetry = post.status === 'discarded' || (post.status === 'draft' && failed)
 
   function imageTitle(shown: Post): string {
     return `${channel.display_name} · ${LANGUAGE_LABELS[shown.language]} · post #${shown.id} · ${shown.status} · ${shown.width}×${shown.height}`
   }
 
-  async function runAction(action: () => Promise<Post>) {
+  async function runAction(action: () => Promise<unknown>) {
     setBusy(true)
     setActionError(null)
     try {
@@ -64,122 +105,160 @@ export function PostCard({ post, channel, earlierVersions, onChanged, onTakenDow
     return api.schedulePost(post.id, scheduledAt)
   }
 
-  function handleDiscard() {
-    if (window.confirm(`Discard post #${post.id}? You can retry it afterwards to get a new version.`)) {
-      runAction(() => api.discardPost(post.id))
-    }
+  async function handleDiscard() {
+    const confirmed = await confirm({
+      title: `Discard post #${post.id}?`,
+      body: 'It stays in this slot’s history. Retry it afterwards to generate a new image and copy for this slot.',
+      confirmLabel: 'Discard',
+      tone: 'danger',
+    })
+    if (confirmed) runAction(() => api.discardPost(post.id))
+  }
+
+  function handleTakeDown() {
+    runAction(async () => {
+      const result = await confirmAndTakeDown(post.id, channel.display_name, confirm)
+      if (result) onTakenDown(result)
+    })
   }
 
   return (
-    <article className={`post-card status-${post.status} generation-${post.generation_status}`} lang={post.language}>
-      <header>
-        <span>
-          {channel.display_name} · {LANGUAGE_LABELS[post.language]} · post #{post.id}
-          {post.parent_post_id !== null && <span className="muted"> · retry of #{post.parent_post_id}</span>}
-        </span>
-        <span className="badges">
-          <span className={`badge badge-status-${post.status}`}>{post.status}</span>
-          <span className={`badge badge-${post.generation_status}`}>{post.generation_status}</span>
-        </span>
-      </header>
-
-      {post.generation_status === 'ready' && post.image_url ? (
-        <button type="button" className="image-button" onClick={() => setEnlargedPost(post)} aria-label={`Enlarge image: ${imageTitle(post)}`}>
-          <img src={post.image_url} alt={post.headline ?? ''} width={post.width ?? undefined} height={post.height ?? undefined} />
-        </button>
-      ) : (
-        <div className="image-placeholder" style={{ aspectRatio: `${channel.width} / ${channel.height}` }}>
-          {post.generation_status === 'failed' ? 'No image' : <span className="spinner">Generating…</span>}
-        </div>
-      )}
-
-      {post.generation_status === 'failed' && <p className="error card-message">{post.generation_error}</p>}
-
-      {post.generation_status === 'ready' && (
-        <div className="post-copy">
-          <p className="headline">{post.headline}</p>
-          <p className="caption">{post.caption}</p>
-          <p className="hashtags">{post.hashtags.map((tag) => `#${tag}`).join(' ')}</p>
-          <p className="meta">
-            {post.width}×{post.height} · {post.file_size_bytes !== null && formatFileSize(post.file_size_bytes)} ·{' '}
-            {post.published_length}/{channel.caption_max_chars} {lengthUnit} · {post.hashtags.length}/{channel.max_hashtags}{' '}
-            hashtags
-          </p>
-        </div>
-      )}
-
-      {post.status === 'scheduled' && post.scheduled_at && (
-        <p className="publish-state">Scheduled for {formatTime(post.scheduled_at)}</p>
-      )}
-      {post.status === 'published' && post.published_at && (
-        <div className="publish-row">
-          <p className="publish-state published">Published by the {channel.display_name} adapter · {formatTime(post.published_at)}</p>
+    <article className={`post status-${post.status} gen-${post.generation_status}`}>
+      <div className="post-media" style={{ aspectRatio: `${channel.width} / ${channel.height}` }}>
+        {ready && post.image_url ? (
           <button
             type="button"
-            className="delete-button small-button"
-            disabled={busy}
-            onClick={() =>
-              runAction(async () => {
-                const result = await confirmAndTakeDown(post.id, channel.display_name)
-                if (result) onTakenDown(result)
-                return result?.post ?? post
-              })
-            }
+            className="post-image"
+            onClick={() => setEnlargedPost(post)}
+            aria-label={`Enlarge image: ${imageTitle(post)}`}
           >
-            Take down
+            <img src={post.image_url} alt={post.headline ?? ''} width={post.width ?? undefined} height={post.height ?? undefined} />
+            <span className="zoom-hint" aria-hidden="true">
+              <MagnifyingGlassPlus size={16} weight="bold" />
+            </span>
           </button>
+        ) : failed ? (
+          <div className="post-placeholder failed">
+            <WarningCircle size={28} aria-hidden="true" />
+            <span>Generation failed</span>
+          </div>
+        ) : (
+          <div className="post-placeholder generating">
+            <span className="spinner" aria-hidden="true" />
+            <span>{post.generation_status === 'pending' ? 'Queued' : 'Generating image and copy'}</span>
+          </div>
+        )}
+        <span className="post-lang" lang={post.language}>
+          {LANGUAGE_LABELS[post.language]}
+        </span>
+      </div>
+
+      <div className="post-body" lang={post.language}>
+        <div className="post-status-row">
+          <span className={`status status-${post.status}`}>
+            <span className="dot" aria-hidden="true" />
+            {STATUS_LABELS[post.status]}
+          </span>
+          <span className="post-id mono">
+            #{post.id}
+            {post.parent_post_id !== null && <span className="muted"> · retry of #{post.parent_post_id}</span>}
+          </span>
         </div>
-      )}
-      {post.status === 'rejected' && (
-        <p className="error card-message">
-          Rejected by the {channel.display_name} adapter: {post.rejection_reason}
-        </p>
-      )}
+
+        {failed && <p className="card-error">{post.generation_error}</p>}
+
+        {ready && (
+          <>
+            <h3 className="post-headline">{post.headline}</h3>
+            <p className="post-caption">{post.caption}</p>
+            {post.hashtags.length > 0 && <p className="post-tags">{post.hashtags.map((tag) => `#${tag}`).join(' ')}</p>}
+            <div className="post-specs">
+              <Meter label={lengthUnit} value={post.published_length} limit={channel.caption_max_chars} />
+              <Meter label="hashtags" value={post.hashtags.length} limit={channel.max_hashtags} />
+              <p className="spec-line mono">
+                <span>
+                  {post.width}×{post.height}
+                </span>
+                {post.file_size_bytes !== null && <span>{formatFileSize(post.file_size_bytes)}</span>}
+              </p>
+            </div>
+          </>
+        )}
+
+        {post.status === 'scheduled' && post.scheduled_at && (
+          <p className="publish-state scheduled">
+            <CalendarBlank size={16} aria-hidden="true" /> Publishes {formatTime(post.scheduled_at)}
+          </p>
+        )}
+        {post.status === 'published' && post.published_at && (
+          <p className="publish-state published">
+            <Broadcast size={16} aria-hidden="true" /> Live on {channel.display_name} since {formatTime(post.published_at)}
+          </p>
+        )}
+        {post.status === 'rejected' && (
+          <p className="card-error">
+            <strong>Rejected by the {channel.display_name} adapter:</strong> {post.rejection_reason}
+          </p>
+        )}
+        {actionError && (
+          <p className="card-error" role="alert">
+            {actionError}
+          </p>
+        )}
+      </div>
 
       {post.status === 'approved' && (
-        <div className="post-actions">
-          <select
-            aria-label="When to publish"
-            value={scheduleHours}
-            disabled={busy}
-            onChange={(event) => setScheduleHours(Number(event.target.value))}
-          >
+        <footer className="post-actions">
+          <div className="segmented" role="radiogroup" aria-label="When to publish">
             {SCHEDULE_OPTIONS.map((option) => (
-              <option key={option.label} value={option.hours}>
-                {option.label}
-              </option>
+              <label key={option.label} className="segment">
+                <input
+                  type="radio"
+                  name={`schedule-${post.id}`}
+                  checked={scheduleHours === option.hours}
+                  disabled={busy}
+                  onChange={() => setScheduleHours(option.hours)}
+                />
+                <span>{option.label}</span>
+              </label>
             ))}
-          </select>
-          <button type="button" className="approve" disabled={busy} onClick={() => runAction(schedule)}>
-            Schedule
+          </div>
+          <button type="button" className="btn btn-primary" disabled={busy} onClick={() => runAction(schedule)}>
+            <CalendarBlank size={16} aria-hidden="true" /> Schedule
           </button>
-        </div>
+        </footer>
       )}
 
-      {(isReadyDraft || canRetry) && (
-        <div className="post-actions">
-          {isReadyDraft && (
-            <>
-              <button type="button" className="approve" disabled={busy} onClick={() => runAction(() => api.approvePost(post.id))}>
-                Approve
-              </button>
-              <button type="button" className="discard" disabled={busy} onClick={handleDiscard}>
-                Discard
-              </button>
-            </>
-          )}
-          {canRetry && (
-            <button type="button" className="retry" disabled={busy} onClick={() => runAction(() => api.retryPost(post.id))}>
-              {busy ? 'Starting…' : 'Retry'}
-            </button>
-          )}
-        </div>
+      {isReadyDraft && (
+        <footer className="post-actions">
+          <button type="button" className="btn btn-ghost" disabled={busy} onClick={handleDiscard}>
+            <X size={16} aria-hidden="true" /> Discard
+          </button>
+          <button type="button" className="btn btn-approve" disabled={busy} onClick={() => runAction(() => api.approvePost(post.id))}>
+            <Check size={16} weight="bold" aria-hidden="true" /> Approve
+          </button>
+        </footer>
       )}
-      {actionError && <p className="error card-message">{actionError}</p>}
+
+      {canRetry && (
+        <footer className="post-actions">
+          <button type="button" className="btn btn-secondary btn-block" disabled={busy} onClick={() => runAction(() => api.retryPost(post.id))}>
+            <ArrowCounterClockwise size={16} aria-hidden="true" /> {busy ? 'Starting…' : 'Retry this slot'}
+          </button>
+        </footer>
+      )}
+
+      {post.status === 'published' && (
+        <footer className="post-actions">
+          <button type="button" className="btn btn-ghost btn-danger-ghost btn-block" disabled={busy} onClick={handleTakeDown}>
+            Take down
+          </button>
+        </footer>
+      )}
 
       {earlierVersions.length > 0 && (
-        <div className="earlier-versions">
-          <p className="muted">Earlier versions</p>
+        <div className="post-history">
+          <p className="history-label">Earlier versions</p>
           <ul>
             {earlierVersions.map((version) => (
               <li key={version.id}>
@@ -195,9 +274,8 @@ export function PostCard({ post, channel, earlierVersions, onChanged, onTakenDow
                 ) : (
                   <span className="thumbnail thumbnail-empty">no image</span>
                 )}
-                <span className="muted">
-                  #{version.id} · {version.status}
-                  {version.generation_status === 'failed' && ' (generation failed)'}
+                <span className="history-meta mono">
+                  #{version.id} · {version.generation_status === 'failed' ? 'failed' : version.status}
                 </span>
               </li>
             ))}

@@ -6,8 +6,8 @@ import pytest
 
 from app.models import Post, PostStatus
 
-DHAKA_TIME = timezone(timedelta(hours=6))
-SCHEDULE_TIME = datetime(2026, 10, 1, 18, 0, tzinfo=DHAKA_TIME)
+KOLKATA_TIME = timezone(timedelta(hours=5, minutes=30))
+SCHEDULE_TIME = datetime(2026, 10, 1, 18, 0, tzinfo=KOLKATA_TIME)
 NON_APPROVED_STATUSES = [status for status in PostStatus if status != PostStatus.APPROVED]
 
 

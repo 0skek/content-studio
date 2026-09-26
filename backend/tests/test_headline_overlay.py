@@ -30,7 +30,7 @@ SPECS = get_channel_specs()
 HEADLINES = {
     "bengali": "শুভ নববর্ষ — লক্ষ্য পূরণের নতুন বছর",
     "english": "New year, new colours",
-    "mixed": "Aarong-এ শুভ নববর্ষ ২০২৬!",
+    "mixed": "Biba-তে শুভ নববর্ষ ২০২৬!",
 }
 JPEG_NOISE_TOLERANCE = 12
 NOISE_BLOCK_PIXELS = 16
@@ -205,11 +205,11 @@ def test_the_headline_reaches_the_target_contrast_on_any_calm_tone(grey):
 
 
 def test_script_runs_give_latin_and_bengali_their_own_fonts():
-    assert script_runs(HEADLINES["mixed"]) == [(False, "Aarong-"), (True, "এ শুভ নববর্ষ ২০২৬"), (False, "!")]
+    assert script_runs(HEADLINES["mixed"]) == [(False, "Biba-"), (True, "তে শুভ নববর্ষ ২০২৬"), (False, "!")]
 
 
 def test_joiners_and_dandas_stay_in_the_bengali_run():
-    text_with_zero_width_joiner_and_danda = "র‍্যাব। ঢাকা"
+    text_with_zero_width_joiner_and_danda = "র‍্যালি। কলকাতা"
 
     assert script_runs(text_with_zero_width_joiner_and_danda) == [(True, text_with_zero_width_joiner_and_danda)]
 
@@ -225,10 +225,10 @@ def test_long_headlines_wrap_within_the_width():
 
 
 def test_wrapped_lines_are_balanced_instead_of_leaving_one_word_alone():
-    """The live LinkedIn headline wrapped as 'Celebrate Pohela Boishakh with Heritage' / 'Wear'."""
+    """A long English headline wraps at the last word that fits: 'Celebrate Poila Baishakh with Heritage' / 'Wear'."""
     fonts = HeadlineFonts.at_size(60)
-    headline = "Celebrate Pohela Boishakh with Heritage Wear"
-    max_width = text_width("Celebrate Pohela Boishakh with Heritage", fonts) + 1
+    headline = "Celebrate Poila Baishakh with Heritage Wear"
+    max_width = text_width("Celebrate Poila Baishakh with Heritage", fonts) + 1
 
     lines = wrap_headline(headline, fonts, max_width)
 

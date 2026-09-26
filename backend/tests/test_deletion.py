@@ -9,7 +9,7 @@ from app.post_status import transition
 from app.reporting import ReportClaim, ReportDraft
 from tests.conftest import TEST_NOW
 
-OTHER_BRIEF = {"title": "Winter shawls", "goal": "Launch", "audience": "Dhaka", "tone": "calm"}
+OTHER_BRIEF = {"title": "Winter shawls", "goal": "Launch", "audience": "Kolkata", "tone": "calm"}
 
 
 def publish_with_metrics(session, post):
@@ -25,7 +25,7 @@ def other_brief_post(session, make_publishable_post):
     other = Brief(**OTHER_BRIEF, languages=["en"])
     session.add(other)
     session.commit()
-    post = make_publishable_post(channel="linkedin")
+    post = make_publishable_post(channel="facebook")
     post.brief_id = other.id
     session.commit()
     return publish_with_metrics(session, post)

@@ -40,7 +40,7 @@ def test_only_published_posts_get_metrics(session, make_publishable_post):
 
 
 def test_snapshots_are_taken_at_most_once_per_interval_and_grow(session, make_publishable_post):
-    post = published(session, make_publishable_post, channel="linkedin")
+    post = published(session, make_publishable_post, channel="facebook")
     first_time = TEST_NOW + timedelta(hours=2)
 
     assert ingest_metrics(session, ADAPTERS, first_time, INTERVAL) == [post.id]
@@ -65,19 +65,19 @@ def test_fast_forward_ingests_metrics(client, make_publishable_post):
 
 
 def test_comparison_ranks_by_rate_not_by_raw_totals(client, session, make_publishable_post):
-    """Instagram has 10x the impressions and more engagements in total, but LinkedIn engages a larger share."""
+    """Instagram has 10x the impressions and more engagements in total, but Facebook engages a larger share."""
     instagram = published(session, make_publishable_post, channel="instagram")
-    linkedin = published(session, make_publishable_post, channel="linkedin")
+    facebook = published(session, make_publishable_post, channel="facebook")
     add_snapshot(session, instagram, impressions=10_000, engagements=200, clicks=20)  # 2% engagement, 0.2% clicks
-    add_snapshot(session, linkedin, impressions=1_000, engagements=50, clicks=15)  # 5% engagement, 1.5% clicks
+    add_snapshot(session, facebook, impressions=1_000, engagements=50, clicks=15)  # 5% engagement, 1.5% clicks
 
     body = client.get(f"/briefs/{instagram.brief_id}/comparison").json()
 
     english = next(row for row in body["rows"] if row["language"] == Language.ENGLISH)
-    assert english["best_engagement_channel"] == "linkedin"
-    assert english["best_click_channel"] == "linkedin"
+    assert english["best_engagement_channel"] == "facebook"
+    assert english["best_click_channel"] == "facebook"
     assert english["cells"]["instagram"]["engagement_rate"] == 0.02
-    assert english["cells"]["linkedin"]["engagement_rate"] == 0.05
+    assert english["cells"]["facebook"]["engagement_rate"] == 0.05
     assert english["cells"]["x"] is None
     assert body["definitions"]["engagement_rate"] == "(likes + comments + shares) / impressions"
 

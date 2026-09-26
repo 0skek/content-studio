@@ -3,7 +3,7 @@
 from enum import StrEnum
 from pathlib import Path
 
-from pydantic import SecretStr
+from pydantic import AliasChoices, Field, SecretStr
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
 BACKEND_DIR = Path(__file__).resolve().parent.parent
@@ -12,21 +12,25 @@ MEDIA_URL_PATH = "/media"
 
 
 class TextProvider(StrEnum):
+    OPENAI = "openai"  # alternative cloud provider
     GEMINI = "gemini"  # production
     OLLAMA = "ollama"  # local development
 
 
 class ImageProvider(StrEnum):
-    CLOUDFLARE = "cloudflare"  # production
+    OPENAI = "openai"  # alternative cloud provider
+    GEMINI = "gemini"  # production (needs billing: no free tier for images)
+    CLOUDFLARE = "cloudflare"  # alternative cloud provider
     LOCAL = "local"  # local development: tools/local_image_server
 
 
 PRODUCTION_TEXT_PROVIDER = TextProvider.GEMINI
-PRODUCTION_IMAGE_PROVIDER = ImageProvider.CLOUDFLARE
+PRODUCTION_IMAGE_PROVIDER = ImageProvider.GEMINI
 
 
 class Settings(BaseSettings):
-    model_config = SettingsConfigDict(env_file=REPO_ROOT / ".env", extra="ignore")
+    # populate_by_name lets code and tests pass fields by name even where an env alias is set.
+    model_config = SettingsConfigDict(env_file=REPO_ROOT / ".env", extra="ignore", populate_by_name=True)
 
     database_path: Path = BACKEND_DIR / "data" / "content_studio.db"
     channels_config_path: Path = BACKEND_DIR / "config" / "channels.json"
@@ -53,7 +57,21 @@ class Settings(BaseSettings):
     local_image_timeout_seconds: float = 300.0
 
     # SecretStr keeps keys out of reprs and logs.
-    gemini_text_api_key: SecretStr | None = None
+    # OpenAI (alternative): one key for text and images; the account needs prepaid API credit.
+    openai_api_key: SecretStr | None = None
+    openai_text_model: str = "gpt-6-sol"
+    # Tried when the model before is overloaded, rate-limited or gone.
+    openai_text_fallback_models: list[str] = ["gpt-6-luna"]
+    openai_text_timeout_seconds: float = 120.0
+    openai_image_model: str = "gpt-image-2.5-flare"
+    # low | medium | high: higher is sharper, slower and dearer.
+    openai_image_quality: str = "medium"
+    openai_image_timeout_seconds: float = 180.0
+    # Gemini (production): one key for both text and images (images need billing on its project: no free tier).
+    # GEMINI_TEXT_API_KEY is its old name, still accepted so existing .env files keep working.
+    gemini_api_key: SecretStr | None = Field(
+        default=None, validation_alias=AliasChoices("GEMINI_API_KEY", "GEMINI_TEXT_API_KEY")
+    )
     cf_account_id: str | None = None
     cf_api_token: SecretStr | None = None
 
@@ -69,6 +87,10 @@ class Settings(BaseSettings):
     # One structured call for 3 channels took ~9s when measured.
     text_request_timeout_seconds: float = 60.0
 
+    # Gemini picks the pixel size from the aspect ratio and tier; channels.json holds the sizes these return.
+    gemini_image_model: str = "gemini-3.1-flash-image"
+    gemini_image_fallback_models: list[str] = ["gemini-3.1-flash-lite-image"]
+    gemini_image_size: str = "1K"
     cloudflare_image_model: str = "@cf/black-forest-labs/flux-2-klein-4b"
     # Warm calls take ~17s and cold starts ~60s.
     image_request_timeout_seconds: float = 90.0

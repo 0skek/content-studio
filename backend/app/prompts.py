@@ -78,13 +78,24 @@ def _orientation(width: int, height: int) -> str:
 # ---------------------------------------------------------------- copy prompts
 
 ENGLISH_COPY_OPENING = (
-    "You are a senior social media copywriter for Bangladeshi brands. "
+    "You are a senior social media copywriter for brands in West Bengal, India. "
     "Write original English copy for each channel below, directly in English."
 )
 BENGALI_COPY_OPENING = (
-    "তুমি বাংলাদেশের ব্র্যান্ডের জন্য কাজ করা একজন অভিজ্ঞ সোশ্যাল মিডিয়া কপিরাইটার। "
+    "তুমি পশ্চিমবঙ্গের ব্র্যান্ডের জন্য কাজ করা একজন অভিজ্ঞ সোশ্যাল মিডিয়া কপিরাইটার। "
     "নিচের প্রতিটি চ্যানেলের জন্য সরাসরি বাংলায় মৌলিক লেখা লেখো — কোনো ইংরেজি লেখা থেকে অনুবাদ নয়। "
-    "ঢাকার মানুষ যেভাবে স্বাভাবিকভাবে কথা বলে ও লেখে, সেভাবে লেখো।"
+    "কলকাতার মানুষ যেভাবে স্বাভাবিকভাবে কথা বলে ও লেখে, সেভাবে লেখো।"
+)
+# A model once wrote the brief's গড়িয়াহাট as গড়েরহাট, rebuilding it from "Gariahat" in the English photo
+# description. Names keep the brief's spelling, in headlines, captions and hashtags alike.
+ENGLISH_NAME_SPELLING_RULE = (
+    "Spell every name of a place, shop, brand, product or person exactly as the brief does, in the headline, "
+    "caption and hashtags. A name the brief gives only in Bengali takes its usual English spelling."
+)
+BENGALI_NAME_SPELLING_RULE = (
+    "জায়গা, দোকান, ব্র্যান্ড, পণ্য বা মানুষের নাম ব্রিফে যে বানানে লেখা আছে, headline, caption আর hashtags-এ "
+    "হুবহু সেই বানানেই লেখো। ছবির ইংরেজি বর্ণনায় থাকা কোনো নামের বাংলা বানান নিজে বানাবে না। ব্রিফে নাম শুধু "
+    "ইংরেজিতে থাকলে কলকাতায় প্রচলিত বাংলা বানানটা লেখো।"
 )
 
 
@@ -130,9 +141,10 @@ def _english_copy_prompt(
         "- Write every headline and caption in English, even if the brief above is written in Bengali.\n"
         "- Use only facts stated in the brief. Do not invent addresses, prices, discounts, dates, phone numbers, "
         "URLs or product details.\n"
+        f"- {ENGLISH_NAME_SPELLING_RULE}\n"
         f"- headline: at most {HEADLINE_MAX_WORDS} words, no hashtags, no emoji. It is set large on the photo, "
         "so make it one strong line that fits what the photo shows.\n"
-        "- hashtags: the words only, without the '#' sign.\n"
+        "- hashtags: the words only, without the '#' sign. Put them only here, never in the caption.\n"
         f"- Return exactly one post per channel, with these channel ids: {', '.join(specs)}."
     )
     if feedback:
@@ -170,9 +182,11 @@ def _bengali_copy_prompt(
         "- ব্রিফ ইংরেজিতে লেখা থাকলেও প্রতিটি headline ও caption বাংলায় লিখবে।\n"
         "- শুধু ব্রিফে দেওয়া তথ্য ব্যবহার করো। ঠিকানা, দাম, ছাড়, তারিখ, ফোন নম্বর, ওয়েবসাইট বা পণ্যের বিবরণ "
         "বানিয়ে লিখবে না।\n"
+        f"- {BENGALI_NAME_SPELLING_RULE}\n"
         f"- headline: সর্বোচ্চ {HEADLINE_MAX_WORDS} শব্দ, হ্যাশট্যাগ বা ইমোজি ছাড়া। এটি ছবির উপর বড় করে বসবে, "
         "তাই ছবির সঙ্গে মানানসই একটি জোরালো লাইন লেখো।\n"
-        "- hashtags: '#' চিহ্ন ছাড়া শুধু শব্দ; বাংলাদেশে যা স্বাভাবিকভাবে ব্যবহৃত হয় (বাংলা বা ইংরেজি)।\n"
+        "- hashtags: '#' চিহ্ন ছাড়া শুধু শব্দ; পশ্চিমবঙ্গে যা স্বাভাবিকভাবে ব্যবহৃত হয় (বাংলা বা ইংরেজি)। "
+        "হ্যাশট্যাগ শুধু এখানেই দেবে, caption-এ কখনো নয়।\n"
         f"- প্রতিটি চ্যানেলের জন্য ঠিক একটি পোস্ট দাও, চ্যানেল আইডি হুবহু: {', '.join(specs)}।"
     )
     if feedback:
@@ -218,7 +232,7 @@ def scene_prompt(brief: BriefContext, specs: Mapping[str, ChannelSpec]) -> str:
         for channel, spec in specs.items()
     )
     sections = [
-        "You are an art director and photographer for Bangladeshi brands. Plan one photograph per channel for "
+        "You are an art director and photographer for brands in West Bengal, India. Plan one photograph per channel for "
         "this campaign; an image model renders each from your prompt. Each channel gets its own scene and "
         "composition; do not reuse one scene across channels. The headline is added later as typography, so the "
         "photo itself carries no text.",
@@ -233,7 +247,7 @@ def scene_prompt(brief: BriefContext, specs: Mapping[str, ChannelSpec]) -> str:
         "- Subject: name what is literally in the frame, in concrete nouns. Whatever the brief is about (product, "
         "occasion, place, craft, audience) must be physically present and recognisable. If the brief speaks to "
         "families, show a family.\n"
-        "- Authentic detail: clothes, fabrics, objects, surfaces and settings that someone in Bangladesh would "
+        "- Authentic detail: clothes, fabrics, objects, surfaces and settings that someone in West Bengal would "
         "recognise as true, not a generic international version.\n"
         "- Moment: let the goal choose it. A launch wants the product seen clearly; a celebration wants people "
         "caught mid-moment, not posing.\n"

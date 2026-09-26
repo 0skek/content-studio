@@ -24,7 +24,7 @@ from sqlalchemy.orm import Session, sessionmaker
 
 from app.adapters import caption_violations
 from app.bengali_script import bengali_letter_share
-from app.caption_length import HASHTAG_PREFIX
+from app.caption_length import HASHTAG_PREFIX, hashtag_count
 from app.channels import ChannelSpec, get_channel_specs
 from app.cloudflare_images import ImageGenerationError
 from app.gemini_text import TextGenerationError
@@ -283,7 +283,7 @@ def base_image_filename(channel: str, post_ids: Iterable[int]) -> str:
 
 def _output_for_channel(channel: str, outputs: Mapping[str, OutputT], what: str) -> OutputT:
     if channel not in outputs:
-        raise UnusableChannelOutput(f"Gemini returned no {what} for {channel}.")
+        raise UnusableChannelOutput(f"The text model returned no {what} for {channel}.")
     return outputs[channel]
 
 
@@ -353,7 +353,7 @@ def _generate_copy(
             if channel not in returned:
                 problems[channel] = [f"{channel}: no post was returned"]
                 continue
-            post = _normalized(returned[channel])
+            post = _normalized(returned[channel], spec)
             channel_problems = limit_problems(channel, post, spec, language)
             if channel_problems:
                 problems[channel] = channel_problems
@@ -371,15 +371,47 @@ def _generate_copy(
     )
 
 
-def _normalized(post: ChannelCopy) -> ChannelCopy:
+def _normalized(post: ChannelCopy, spec: ChannelSpec) -> ChannelCopy:
+    """Tidy a returned post and fit its hashtags to the channel's limit, before anyone reviews it.
+
+    Hashtag-only lines at the end of the caption move into the hashtags (models often repeat their tags there, which
+    would count them twice). The hashtags then keep their first tags, as many as the limit leaves room for after any
+    hashtags inside the caption's sentences. Those are never removed, since that would rewrite a sentence, so too many
+    of them still fails the limit check. This is generation: at publishing the adapters reject, never trim (rule 3).
+    """
+    caption, appended_tags = _split_trailing_hashtags(post.caption.strip())
+    hashtags = _cleaned_hashtags([*post.hashtags, *appended_tags])
+    room = max(0, spec.caption.max_hashtags - hashtag_count(caption))
+    if len(hashtags) > room:
+        logger.info("Trimmed %s hashtags from %d to %d to fit the limit", post.channel, len(hashtags), room)
+        hashtags = hashtags[:room]
+    return ChannelCopy(channel=post.channel, headline=post.headline.strip(), caption=caption, hashtags=hashtags)
+
+
+def _split_trailing_hashtags(caption: str) -> tuple[str, list[str]]:
+    """The caption without its closing hashtag-only lines, and the tags from those lines."""
+    lines = caption.split("\n")
+    tags: list[str] = []
+    while lines and (not lines[-1].strip() or _is_hashtag_line(lines[-1])):
+        tags[:0] = lines.pop().split()
+    return "\n".join(lines).strip(), tags
+
+
+def _is_hashtag_line(line: str) -> bool:
+    words = line.split()
+    return bool(words) and hashtag_count(line) == len(words)
+
+
+def _cleaned_hashtags(tags: Iterable[str]) -> list[str]:
+    """Tags without '#' or spaces, empty ones dropped, repeats (ignoring case, as platforms do) dropped."""
     hashtags: list[str] = []
-    for tag in post.hashtags:
+    seen: set[str] = set()
+    for tag in tags:
         cleaned = "".join(tag.strip().lstrip(HASHTAG_PREFIX).split())
-        if cleaned and cleaned not in hashtags:
+        if cleaned and cleaned.casefold() not in seen:
+            seen.add(cleaned.casefold())
             hashtags.append(cleaned)
-    return ChannelCopy(
-        channel=post.channel, headline=post.headline.strip(), caption=post.caption.strip(), hashtags=hashtags
-    )
+    return hashtags
 
 
 def language_problems(channel: str, post: ChannelCopy, language: Language) -> list[str]:
