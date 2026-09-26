@@ -1,10 +1,19 @@
 import { useState } from 'react'
-import { api, errorText, type Channel, type Language, type Post } from '../api'
+import { api, errorText, type Channel, type Language, type Post, type TakenDown } from '../api'
+import { formatTime } from '../format'
+import { confirmAndTakeDown } from '../takeDown'
 import { ImageLightbox } from './ImageLightbox'
 
 const LANGUAGE_LABELS: Record<Language, string> = { bn: 'বাংলা', en: 'English' }
 const BYTES_PER_KILOBYTE = 1024
 const BYTES_PER_MEGABYTE = BYTES_PER_KILOBYTE * 1024
+const MILLISECONDS_PER_HOUR = 60 * 60 * 1000
+// Scheduling options, measured from the demo clock's "now" (which includes any fast-forward).
+const SCHEDULE_OPTIONS = [
+  { label: 'now', hours: 0 },
+  { label: 'in 1 hour', hours: 1 },
+  { label: 'in 1 day', hours: 24 },
+]
 
 function formatFileSize(bytes: number): string {
   if (bytes >= BYTES_PER_MEGABYTE) return `${(bytes / BYTES_PER_MEGABYTE).toFixed(1)} MB`
@@ -18,12 +27,15 @@ interface PostCardProps {
   earlierVersions: Post[]
   // Called after an approve/discard/retry so the brief reloads.
   onChanged: () => void
+  // Called after a take-down, which may also have deleted reports.
+  onTakenDown: (result: TakenDown) => void
 }
 
-export function PostCard({ post, channel, earlierVersions, onChanged }: PostCardProps) {
+export function PostCard({ post, channel, earlierVersions, onChanged, onTakenDown }: PostCardProps) {
   const [enlargedPost, setEnlargedPost] = useState<Post | null>(null)
   const [busy, setBusy] = useState(false)
   const [actionError, setActionError] = useState<string | null>(null)
+  const [scheduleHours, setScheduleHours] = useState(SCHEDULE_OPTIONS[1].hours)
 
   const lengthUnit = channel.length_counting === 'x_weighted' ? 'weighted characters' : 'characters'
   const isReadyDraft = post.status === 'draft' && post.generation_status === 'ready'
@@ -44,6 +56,12 @@ export function PostCard({ post, channel, earlierVersions, onChanged }: PostCard
     } finally {
       setBusy(false)
     }
+  }
+
+  async function schedule() {
+    const clock = await api.getClock()
+    const scheduledAt = new Date(new Date(clock.now).getTime() + scheduleHours * MILLISECONDS_PER_HOUR)
+    return api.schedulePost(post.id, scheduledAt)
   }
 
   function handleDiscard() {
@@ -87,6 +105,54 @@ export function PostCard({ post, channel, earlierVersions, onChanged }: PostCard
             {post.published_length}/{channel.caption_max_chars} {lengthUnit} · {post.hashtags.length}/{channel.max_hashtags}{' '}
             hashtags
           </p>
+        </div>
+      )}
+
+      {post.status === 'scheduled' && post.scheduled_at && (
+        <p className="publish-state">Scheduled for {formatTime(post.scheduled_at)}</p>
+      )}
+      {post.status === 'published' && post.published_at && (
+        <div className="publish-row">
+          <p className="publish-state published">Published by the {channel.display_name} adapter · {formatTime(post.published_at)}</p>
+          <button
+            type="button"
+            className="delete-button small-button"
+            disabled={busy}
+            onClick={() =>
+              runAction(async () => {
+                const result = await confirmAndTakeDown(post.id, channel.display_name)
+                if (result) onTakenDown(result)
+                return result?.post ?? post
+              })
+            }
+          >
+            Take down
+          </button>
+        </div>
+      )}
+      {post.status === 'rejected' && (
+        <p className="error card-message">
+          Rejected by the {channel.display_name} adapter: {post.rejection_reason}
+        </p>
+      )}
+
+      {post.status === 'approved' && (
+        <div className="post-actions">
+          <select
+            aria-label="When to publish"
+            value={scheduleHours}
+            disabled={busy}
+            onChange={(event) => setScheduleHours(Number(event.target.value))}
+          >
+            {SCHEDULE_OPTIONS.map((option) => (
+              <option key={option.label} value={option.hours}>
+                {option.label}
+              </option>
+            ))}
+          </select>
+          <button type="button" className="approve" disabled={busy} onClick={() => runAction(schedule)}>
+            Schedule
+          </button>
         </div>
       )}
 

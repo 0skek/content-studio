@@ -42,6 +42,11 @@ def caption_length(text: str, counting: LengthCounting) -> int:
     return len(normalized)
 
 
+def hashtag_count(text: str) -> int:
+    """Hashtags as the platform sees them: every word starting with '#', inline in the caption or appended."""
+    return sum(1 for word in text.split() if word.startswith(HASHTAG_PREFIX) and len(word) > len(HASHTAG_PREFIX))
+
+
 def published_text(caption: str, hashtags: list[str]) -> str:
     """The text a channel actually receives: the caption, then the hashtags. Limits apply to this."""
     if not hashtags:

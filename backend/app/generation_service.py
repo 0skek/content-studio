@@ -19,17 +19,18 @@ from pathlib import Path
 from typing import TypeVar
 
 from PIL import Image, UnidentifiedImageError
-from sqlalchemy import update
+from sqlalchemy import select, update
 from sqlalchemy.orm import Session, sessionmaker
 
+from app.adapters import caption_violations
 from app.bengali_script import bengali_letter_share
-from app.caption_length import HASHTAG_PREFIX, LengthCounting, caption_length, published_text
+from app.caption_length import HASHTAG_PREFIX
 from app.channels import ChannelSpec, get_channel_specs
 from app.cloudflare_images import ImageGenerationError
 from app.gemini_text import TextGenerationError
 from app.generation_clients import GenerationClients, ImageClient, TextClient
 from app.headline_overlay import DEFAULT_TEXT_ZONE, TextZone, allowed_text_zones, overlay_headline
-from app.models import Brief, GenerationStatus, Language, Post
+from app.models import Brief, GenerationStatus, Insight, Language, Post
 from app.prompts import (
     HEADLINE_MAX_WORDS,
     BriefContext,
@@ -61,6 +62,12 @@ class BriefNotFound(Exception):
         self.brief_id = brief_id
 
 
+class UnknownInsights(Exception):
+    def __init__(self, insight_ids: list[int]) -> None:
+        super().__init__(f"No insight with id {', '.join(str(insight_id) for insight_id in insight_ids)}.")
+        self.insight_ids = insight_ids
+
+
 class ImageSizeMismatch(Exception):
     """The image service returned a size other than the one requested (rule 1: never resize)."""
 
@@ -79,14 +86,21 @@ class CopyOutcome:
 
 
 def create_brief_with_drafts(session: Session, brief_in: BriefCreate) -> Brief:
-    """Create the brief and one pending draft per channel x language."""
+    """Create the brief and one pending draft per channel x language, recording which insights it applies."""
+    insights = session.scalars(select(Insight).where(Insight.id.in_(brief_in.insight_ids))).all()
+    missing = sorted(set(brief_in.insight_ids) - {insight.id for insight in insights})
+    if missing:
+        raise UnknownInsights(missing)
     brief = Brief(
         title=brief_in.title,
         goal=brief_in.goal,
         audience=brief_in.audience,
         tone=brief_in.tone,
         languages=[str(language) for language in brief_in.languages],
-        insights_used=[],
+        insights_used=[
+            {"id": insight.id, "report_id": insight.report_id, "text": insight.text}
+            for insight in sorted(insights, key=lambda insight: insight.id)
+        ],
     )
     for channel in get_channel_specs():
         for language in brief_in.languages:
@@ -212,7 +226,9 @@ def _start_generation(
             goal=brief.goal,
             audience=brief.audience,
             tone=brief.tone,
-            insights=tuple(str(insight) for insight in brief.insights_used),
+            insights=tuple(
+                insight["text"] if isinstance(insight, dict) else str(insight) for insight in brief.insights_used
+            ),
         )
         languages = [Language(code) for code in brief.languages]
         post_ids: dict[tuple[str, Language], int] = {}
@@ -393,14 +409,8 @@ def limit_problems(channel: str, post: ChannelCopy, spec: ChannelSpec, language:
         problems.append(f"{channel}: headline has {headline_words} words; the limit is {HEADLINE_MAX_WORDS}")
     if not post.caption:
         problems.append(f"{channel}: caption is empty")
-    if len(post.hashtags) > spec.caption.max_hashtags:
-        problems.append(f"{channel}: {len(post.hashtags)} hashtags; the limit is {spec.caption.max_hashtags}")
-    length = caption_length(published_text(post.caption, post.hashtags), spec.caption.length_counting)
-    if length > spec.caption.max_chars:
-        unit = "weighted characters" if spec.caption.length_counting == LengthCounting.X_WEIGHTED else "characters"
-        problems.append(
-            f"{channel}: caption plus hashtags is {length} {unit}; the limit is {spec.caption.max_chars}"
-        )
+    # The same caption rules the adapter applies at publishing, so a generated post is never rejected there.
+    problems.extend(f"{channel}: {problem}" for problem in caption_violations(post.caption, post.hashtags, spec.caption))
     return problems
 
 

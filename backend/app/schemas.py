@@ -25,6 +25,8 @@ class BriefCreate(BaseModel):
     audience: NonBlankText
     tone: NonBlankText
     languages: list[Language] = Field(default_factory=lambda: list(DEFAULT_BRIEF_LANGUAGES), min_length=1)
+    # Insights from a weekly report to apply to this brief; their text goes into the generation prompts.
+    insight_ids: list[int] = Field(default_factory=list)
 
     @field_validator("languages")
     @classmethod

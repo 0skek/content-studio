@@ -7,7 +7,8 @@ ALLOWED_TRANSITIONS: dict[PostStatus, frozenset[PostStatus]] = {
     PostStatus.APPROVED: frozenset({PostStatus.SCHEDULED}),
     PostStatus.SCHEDULED: frozenset({PostStatus.PUBLISHED, PostStatus.REJECTED}),
     PostStatus.DISCARDED: frozenset(),
-    PostStatus.PUBLISHED: frozenset(),
+    # Taking a post down from its channel returns it to the approved queue, so it can be scheduled again.
+    PostStatus.PUBLISHED: frozenset({PostStatus.APPROVED}),
     PostStatus.REJECTED: frozenset(),
 }
 

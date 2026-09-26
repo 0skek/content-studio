@@ -7,7 +7,7 @@ from app.post_status import ALLOWED_TRANSITIONS, GenerationNotReady, InvalidTran
 
 ALLOWED_PAIRS = [(source, target) for source, targets in ALLOWED_TRANSITIONS.items() for target in targets]
 DISALLOWED_PAIRS = [pair for pair in itertools.product(PostStatus, repeat=2) if pair not in ALLOWED_PAIRS]
-FINAL_STATUSES = [PostStatus.DISCARDED, PostStatus.PUBLISHED, PostStatus.REJECTED]
+FINAL_STATUSES = [PostStatus.DISCARDED, PostStatus.REJECTED]
 REJECTION_REASON = "Image aspect ratio 1.00 does not match 4:5"
 
 
@@ -44,6 +44,10 @@ def test_disallowed_transition_raises_and_leaves_post_untouched(make_post_in_sta
 @pytest.mark.parametrize("final_status", FINAL_STATUSES)
 def test_final_statuses_have_no_way_out(final_status):
     assert ALLOWED_TRANSITIONS[final_status] == frozenset()
+
+
+def test_a_published_post_can_only_be_taken_down_back_to_approved():
+    assert ALLOWED_TRANSITIONS[PostStatus.PUBLISHED] == frozenset({PostStatus.APPROVED})
 
 
 def test_refusal_message_names_the_allowed_targets(make_post_in_status):

@@ -1,0 +1,43 @@
+{
+  "_about": "Synthetic engagement for the mock adapters. NOT real data. Numbers are rough, platform-typical shapes: Instagram reaches widely with mostly likes, LinkedIn reaches fewer people but engages and clicks more, X reaches fast with the lowest engagement rate. Each post's totals grow toward a final value (63% reached after hours_to_63_percent_reach) and are seeded by post id, so they are repeatable. The patterns below are deliberate, documented effects for the weekly report to discover.",
+  "snapshot_interval_minutes": 30,
+  "reach_spread": 0.35,
+  "rate_jitter": 0.15,
+  "channels": {
+    "instagram": {
+      "median_final_impressions": 3500,
+      "hours_to_63_percent_reach": 20,
+      "rates": { "like": 0.035, "comment": 0.004, "share": 0.003, "click": 0.004 }
+    },
+    "linkedin": {
+      "median_final_impressions": 1500,
+      "hours_to_63_percent_reach": 40,
+      "rates": { "like": 0.025, "comment": 0.005, "share": 0.003, "click": 0.012 }
+    },
+    "x": {
+      "median_final_impressions": 2800,
+      "hours_to_63_percent_reach": 5,
+      "rates": { "like": 0.010, "comment": 0.0015, "share": 0.003, "click": 0.007 }
+    }
+  },
+  "patterns": [
+    {
+      "channel": "instagram",
+      "description": "Bengali posts get more engagement than English ones on Instagram.",
+      "language": "bn",
+      "engagement_factor": 1.35
+    },
+    {
+      "channel": "linkedin",
+      "description": "LinkedIn posts with more than 3 hashtags get less engagement.",
+      "min_hashtags": 4,
+      "engagement_factor": 0.7
+    },
+    {
+      "channel": "x",
+      "description": "Short X posts (140 weighted characters or fewer, hashtags included) get more clicks.",
+      "max_published_length": 140,
+      "click_factor": 1.6
+    }
+  ]
+}

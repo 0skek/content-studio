@@ -45,6 +45,9 @@ class Settings(BaseSettings):
     # here (about 30 s on the laptop GPU) and gets one retry, instead of running into the timeout.
     ollama_max_output_tokens: int = 1536
 
+    # How often the background loop publishes due posts.
+    scheduler_interval_seconds: float = 5.0
+
     local_image_url: str = "http://127.0.0.1:8100"
     # Per image, not counting the wait for the GPU (see app/local_gpu.py).
     local_image_timeout_seconds: float = 300.0

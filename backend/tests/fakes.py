@@ -1,6 +1,7 @@
 """Fake Gemini and Cloudflare clients: no network, and every call is recorded for assertions."""
 
 import io
+import re
 import threading
 from dataclasses import dataclass, field
 
@@ -8,9 +9,25 @@ from PIL import Image
 
 from app.models import Language
 from app.prompts import BENGALI_COPY_OPENING, ChannelCopy, ChannelScene, CopySet, SceneSet
+from app.reporting import ReportClaim, ReportDraft
 
 FAKE_IMAGE_COLOR = (40, 90, 160)
 FAKE_TEXT_ZONE = "top"
+POST_LINE = re.compile(r"^- post #(\d+):", re.MULTILINE)
+
+
+def valid_report_for(prompt: str) -> ReportDraft:
+    """A report citing the first post listed in the prompt's data, so every citation is real."""
+    post_ids = [int(post_id) for post_id in POST_LINE.findall(prompt)]
+    cited = post_ids[:1]
+    return ReportDraft(
+        summary=ReportClaim(text="A steady week across channels.", post_ids=cited),
+        findings=[ReportClaim(text="Instagram led on engagement rate.", post_ids=cited)],
+        insights=[
+            ReportClaim(text="Lead with Bengali copy on Instagram.", post_ids=cited),
+            ReportClaim(text="Keep LinkedIn to three hashtags or fewer.", post_ids=cited),
+        ],
+    )
 
 
 def fake_scene(channel: str) -> str:
@@ -57,6 +74,8 @@ class FakeTextClient:
     scene_error: Exception | None = None
     # channel -> the headline zone the scene writer picks (FAKE_TEXT_ZONE if not listed).
     scene_zones: dict[str, str] = field(default_factory=dict)
+    # Reports to return on attempt 1, 2, ... (the last one repeats); empty means a valid report for the prompt.
+    report_versions: list[ReportDraft] = field(default_factory=list)
     copy_errors: dict[Language, Exception] = field(default_factory=dict)
     calls: list[TextCall] = field(default_factory=list)
     _copy_attempts: dict[Language, int] = field(default_factory=dict)
@@ -75,6 +94,13 @@ class FakeTextClient:
                 ]
             )
 
+        if schema is ReportDraft:
+            with self._lock:
+                attempt = len(self.report_calls()) - 1
+            if not self.report_versions:
+                return valid_report_for(prompt)
+            return self.report_versions[min(attempt, len(self.report_versions) - 1)]
+
         language = copy_language_of(prompt)
         if language in self.copy_errors:
             raise self.copy_errors[language]
@@ -86,6 +112,9 @@ class FakeTextClient:
             versions = self.copy_versions.get((language, channel))
             posts.append(versions[min(attempt, len(versions) - 1)] if versions else default_copy(language, channel))
         return CopySet(posts=posts)
+
+    def report_calls(self) -> list[TextCall]:
+        return [call for call in self.calls if call.schema is ReportDraft]
 
     def copy_calls(self, language: Language) -> list[TextCall]:
         return [call for call in self.calls if call.schema is CopySet and copy_language_of(call.prompt) == language]

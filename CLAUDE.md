@@ -21,7 +21,7 @@ cross-platform comparison → weekly AI report citing post IDs → report insigh
 - Backend: FastAPI + SQLite via SQLAlchemy 2.0; uv project in `backend/`. No Postgres, Redis, Celery, or auth.
   Tables come from `create_all()`, with no migrations: after a schema change, delete `backend/data/content_studio.db`.
 - Frontend: React (Vite) + TypeScript in `frontend/`, plain CSS. The Vite dev server proxies API and `/media` paths to the backend on :8000.
-- Scheduler: APScheduler or a simple due-posts loop, plus a "fast-forward time" demo control.
+- Scheduler: a simple due-posts loop plus a "fast-forward time" demo control (see Publishing below).
 - Text generation: Gemini via `google-genai` on the free-tier key. No billing: don't enable or rely on it without asking me.
   - Model chain (set in `app/config.py`): `gemini-3.8-flash` → `3.7-flash` → `3.6-flash` → `3.5-flash` → `3.5-flash-lite`.
     - An overloaded model (5xx) gets one retry. A model out of quota (429) or gone (404) is skipped at once. `gemini-2.5-flash` returns 404 for new keys.
@@ -83,13 +83,71 @@ cross-platform comparison → weekly AI report citing post IDs → report insigh
 - **Measurements:** `width`, `height`, and `file_size_bytes` are measured from the final (overlaid) file, because that's what the adapters validate.
 - **Files:** `backend/media/briefs/{brief_id}/` holds the raw `{channel}-base-post{ids}.jpg` images (named after the posts built from them, so retries never overwrite one) and the final `{channel}-{language}-post{post_id}.jpg` posts. The app serves them at `/media`; the folder is gitignored.
 
+## Publishing (milestone 4)
+- **Adapters** (`app/adapters.py`): one mock adapter per channel, built from channels.json. It checks what would actually be sent, and rejects every violation with an explicit reason.
+  - It checks: the final image file (readable, aspect ratio ±2%, file size), caption plus hashtags length (X weighted), and hashtag count (inline `#tags` included).
+  - It never resizes, recompresses or trims (rule 3).
+  - Generation uses the same `caption_violations()`, so a generated post is never rejected for its copy.
+- **Publisher** (`app/publisher.py`): due `scheduled` posts go through their adapter and move to `published` (with `published_at`) or `rejected` (with `rejection_reason`), only via `transition()`.
+  - A background loop runs every `SCHEDULER_INTERVAL_SECONDS` (5).
+  - A lock keeps the loop and the manual controls from publishing a post twice.
+- **Clock** (`app/clock.py`): real UTC plus an in-memory fast-forward offset (a restart resets it). The UI header's clock bar has +1 hour, +1 day, "Publish due now" and "Reset to current time".
+  - Endpoints: `GET /clock`, `POST /clock/advance {hours}`, `POST /clock/reset`, `POST /publisher/run-due`.
+  - After a reset, posts published during the fast-forward have later timestamps than "now". Their metrics pause until real time catches up, and the report window has no upper bound, so they stay in reports.
+- **Adapter test bench**: the UI tab and `POST /adapters/{channel}/submit` (multipart: `caption`, `hashtags`, `image`) send anything straight to an adapter. Nothing is stored.
+  - It returns 200 when accepted, or 422 with `detail.reasons` and the measurements. This is how the demo shows a violating post being rejected.
+  - Presets make an exact-size image, a wrong-ratio (square) image, an oversized PNG, and a caption 20 over the limit.
+- UI: approved posts get a Schedule control (now / in 1 hour / in 1 day, from the demo clock). Cards show the scheduled or published time, or the rejection reason.
+
+## Analytics (milestone 5)
+- **Synthetic metrics** (`config/synthetic_metrics.json`, `app/synthetic_metrics.py`) are not real data. Each mock adapter's `fetch_metrics()` reports them.
+  - Channel profiles: Instagram has the widest reach and mostly likes; LinkedIn has less reach but a higher engagement rate and the most clicks; X reaches fast with the lowest engagement rate.
+  - Totals grow as 1 - exp(-hours / hours_to_63_percent_reach) (X in hours, LinkedIn over days), and are seeded by post id and channel, so they are repeatable.
+  - **Deliberate, documented patterns** for the weekly report to find:
+    - Bengali gets 1.35x engagement on Instagram.
+    - LinkedIn posts with 4 or more hashtags get 0.7x engagement.
+    - X posts of 140 weighted characters or fewer get 1.6x clicks.
+- **Ingestion** (`app/analytics.py`): every publishing run (background loop, fast-forward, "Publish due now") snapshots each published post into `metrics`, at most once per `snapshot_interval_minutes` (30) of demo time.
+- **Comparison** (`GET /briefs/{id}/comparison`): like-for-like, meaning the same brief and language, one column per channel, using each post's latest snapshot.
+  - Posts are ranked by **rates, never raw totals**: engagement rate = (likes + comments + shares) / impressions, click-through rate = clicks / impressions.
+  - Channel summaries pool totals (sums over sums). Posts without impressions show but aren't ranked.
+  - The UI shows it as "Performance across channels" under the brief.
+- **Channel feeds** (`GET /feeds`, "Channel feeds" tab): each mock channel's published posts, rendered in that platform's style (labelled "mock"), with live metrics. This is the demo's proof that a post was "posted".
+
+## Weekly report and insights (milestone 6)
+- **Report** (`app/reporting.py`, `POST /reports`, "Reports" tab): covers posts published in the last 7 days of the demo clock, with their latest metrics.
+  - Code computes pooled rates per group (channel, channel x language, channel x hashtags 0-3 vs 4+, channel x length up to 140 vs longer), with the post IDs behind each.
+  - One text-model call (the same client as generation: Gemini in production, Ollama in dev) returns a summary, findings and 1-4 insights, each with `post_ids`.
+- **Citation validation (rule 5)**: every claim must cite at least one post ID, and every cited ID, including any `#123` written in the text, must be a post in that week's evidence.
+  - Otherwise the report is regenerated with the problems as feedback, up to `MAX_REPORT_ATTEMPTS` (3). After that the API returns 502 and nothing is saved.
+  - Numbers are not verified; only citations are.
+  - No published posts gives 409, and no model call is made.
+  - Stored as `reports.body` (JSON: summary, findings, insights with post_ids) plus `cited_post_ids`, and one `insights` row per insight.
+- **Insights into the next brief (rule 4)**: `GET /insights/latest` feeds the brief form's "Insights from the latest report" checkboxes, ticked by default.
+  - The chosen `insight_ids` go in `POST /briefs`. They're saved on the brief as `insights_used` ({id, report_id, text}), shown on the brief view, and injected into the scene prompt and both copy prompts ("What worked before").
+- **Report page** ("Reports" tab, `#reports`):
+  - The report also stores its evidence (per-post metrics and group rates) in `reports.body`, so the charts show exactly the numbers the model was given.
+  - Layout: stat tiles, the summary as a callout, four grouped bar charts (engagement rate and click-through rate by channel x language; hashtag count vs engagement; post length vs clicks), numbered findings with a bold lead sentence, a "Do next" insight list, and a collapsible table of every post.
+  - Charts follow the dataviz skill: reference palette slots 1-4, checked with its validator against the white card (aqua is below 3:1, so every bar carries its value label). Each chart has a legend, a hover/focus tooltip and a table-view toggle.
+  - While a report is being written: a bordered panel with a progress bar, a spinner and an elapsed timer, the button reads "Writing…", the Reports tab shows "writing…", and older reports dim. The view stays mounted when hidden, so switching tabs doesn't lose it. Older reports fold into one-line rows.
+- With only a couple of published posts, a small model's analysis is thin (seen with gemma3:4b: a wrong number, an unsupported claim). The demo needs a week of published posts (M7).
+
+## Deleting (`app/deletion.py`)
+- `DELETE /briefs/{id}` ("Delete brief" on the brief view) removes the brief, all its posts (retry chains included), their metrics, and `media/briefs/{id}/`.
+  - It also removes any report citing those posts, with its insights, so no stored report cites a missing post (rule 5).
+  - It's refused with 409 while any of its posts is pending or generating.
+- `DELETE /reports/{id}` ("Delete report") removes the report and its insights; the previous report's insights become the latest. Briefs keep the insight text they applied.
+- `POST /posts/{id}/take-down` ("Take down" on feed posts and published post cards) moves a published post back to approved, clears `published_at`, `scheduled_at` and its metrics, and deletes reports citing it.
+  - The post can then be scheduled and published again, with metrics from zero. This replays the demo without regenerating anything, so it costs no quota.
+  - A re-published post starts at 0 because `published_at` is when the publishing run happened; the next fast-forward grows it.
+
 ## Single sources of truth
 - `backend/config/channels.json`: channel specs (image width/height, aspect ratio + tolerance, max file MB, caption limit, hashtag limit).
   - Used by BOTH generation and adapter validation. No limits hardcoded anywhere else.
   - Sizes are multiples of 16 that the image model returns exactly: Instagram 1024×1280 (4:5), LinkedIn 1344×704 (1.91:1), X 1536×864 (16:9).
   - Aspect-ratio tolerance is ±2%.
 - `ALLOWED_TRANSITIONS` + `transition(post, new_status)` in `app/post_status.py`: the ONLY way post status changes (a test enforces it).
-  - States: draft → approved | discarded; approved → scheduled; scheduled → published | rejected.
+  - States: draft → approved | discarded; approved → scheduled; scheduled → published | rejected; published → approved (take-down, so it can be scheduled again).
   - Retry = new draft with `parent_post_id` pointing to the discarded one.
     - A draft whose generation failed can be retried directly; it is discarded first.
     - Each post can be retried once (`parent_post_id` is unique), so each channel/language slot's history is a chain.
@@ -108,9 +166,9 @@ All timestamps are stored in UTC.
 1. ✅ (2026-09-26) Schema, channels.json, transition() + test: scheduling an unapproved post is refused.
 2. ✅ (2026-09-26) Generation: per-channel image (parallel background jobs, per-post "generating" state, headline overlay) + caption, Bengali + English, for one brief. Test: 3 images have 3 different sizes, generated separately.
 3. ✅ (2026-09-26) Approval UI: approve / discard / retry (retry keeps lineage).
-4. Mock adapters + validation + scheduler. Test: an oversized caption and a wrong-ratio image are each rejected with a reason.
-5. Synthetic metrics (seeded, platform-realistic) + side-by-side comparison per brief using normalized rates (engagement rate), not raw totals.
-6. Weekly report with citation validation → insights table → insights visible on and injected into the brief form.
+4. ✅ (2026-09-26) Mock adapters + validation + scheduler. Test: an oversized caption and a wrong-ratio image are each rejected with a reason.
+5. ✅ (2026-09-26) Synthetic metrics (seeded, platform-realistic) + side-by-side comparison per brief using normalized rates (engagement rate), not raw totals.
+6. ✅ (2026-09-26) Weekly report with citation validation → insights table → insights visible on and injected into the brief form.
 7. End-to-end demo run + cached fallback assets in case generation is slow live.
 
 Feature freeze after milestone 7. Bug fixes only after that.
@@ -119,6 +177,7 @@ Feature freeze after milestone 7. Bug fixes only after that.
 - Backend tests (from `backend/`): `uv run pytest -q`
 - API (from `backend/`): `uv run uvicorn app.main:app --reload` (`GET /health`, docs at `/docs`)
 - UI (from `frontend/`): `npm run dev`, then open http://localhost:5173. Type-check and build with `npm run build`, lint with `npm run lint`.
+  - Tabs are in the URL hash (`#studio`, `#feeds`, `#reports`, `#bench`). `BACKEND_URL=http://localhost:8001 npx vite --port 5174` points a second dev server at a test backend.
 - Local image server, dev only (from `tools/local_image_server/`): `uv run uvicorn server:app --port 8100`. The first start downloads SDXL (about 7 GB).
 - Local text model, dev only: `ollama pull gemma3:4b` once. Ollama itself runs as a system service.
 
