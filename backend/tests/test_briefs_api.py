@@ -4,7 +4,7 @@ from app.caption_length import caption_length, published_text
 from app.channels import get_channel_specs
 from app.generation_clients import GenerationNotConfigured
 from app.main import app
-from app.routes.briefs import get_generation_clients
+from app.dependencies import get_generation_clients
 
 SPECS = get_channel_specs()
 BRIEF_BODY = {

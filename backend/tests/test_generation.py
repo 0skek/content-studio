@@ -1,5 +1,7 @@
 """Generation of a brief's drafts, including the milestone 2 done-check (rule 1) and native languages (rule 6)."""
 
+import io
+
 import pytest
 from PIL import Image
 from sqlalchemy import select
@@ -7,19 +9,34 @@ from sqlalchemy import select
 from app.channels import get_channel_specs
 from app.cloudflare_images import ImageGenerationError
 from app.gemini_text import TextGenerationError
+from app.generation_clients import GenerationClients
 from app.generation_service import (
     BRIEFS_MEDIA_SUBDIR,
     INTERRUPTED_MESSAGE,
     MAX_COPY_ATTEMPTS,
+    base_image_filename,
     create_brief_with_drafts,
     fail_interrupted_generation,
     limit_problems,
     run_brief_generation,
 )
-from app.models import GenerationStatus, Language, Post
-from app.prompts import BENGALI_COPY_OPENING, HEADLINE_MAX_WORDS, NO_TEXT_CLAUSE, ChannelCopy
+from app.models import GenerationStatus, Language, Post, PostStatus
+from app.post_status import transition
+from app import generation_service
+from app.headline_overlay import DEFAULT_TEXT_ZONE, TextZone
+from app.prompts import (
+    BENGALI_COPY_OPENING,
+    HEADLINE_MAX_WORDS,
+    HEADLINE_ZONE_CLAUSES,
+    NO_TEXT_CLAUSE,
+    BriefContext,
+    ChannelCopy,
+    CopySet,
+    SceneSet,
+    copy_prompt,
+)
 from app.schemas import BriefCreate
-from tests.fakes import default_copy
+from tests.fakes import FAKE_TEXT_ZONE, default_copy, fake_scene
 
 BRIEF_INPUT = BriefCreate(
     title="Pohela Boishakh collection",
@@ -62,7 +79,8 @@ def test_each_channel_image_is_generated_separately_at_its_native_size(generate,
     assert len({call.prompt for call in fake_images.calls}) == 3
 
     for channel, spec in SPECS.items():
-        with Image.open(brief_dir(media_dir, brief) / f"{channel}-base.jpg") as base_image:
+        channel_post_ids = [posts[(channel, language)].id for language in Language]
+        with Image.open(brief_dir(media_dir, brief) / base_image_filename(channel, channel_post_ids)) as base_image:
             assert base_image.size == (spec.image.width, spec.image.height)
 
     assert len(posts) == 6
@@ -96,8 +114,61 @@ def test_wrong_size_from_the_image_service_fails_instead_of_resizing(generate, f
         assert post.generation_status == GenerationStatus.FAILED
         assert f"came back 1024x1024 but {instagram.width}x{instagram.height} was requested" in post.generation_error
         assert post.image_path is None
-    assert not (brief_dir(media_dir, brief) / "instagram-base.jpg").exists()
+    assert not list(brief_dir(media_dir, brief).glob("instagram-*.jpg"))
     assert all(post.generation_status == GenerationStatus.READY for (c, _), post in posts.items() if c != "instagram")
+
+
+def test_a_later_run_regenerates_only_the_pending_post(
+    generate, brief, session_factory, fake_images, fake_text, media_dir
+):
+    first_run = generate()
+    replaced = first_run[("x", Language.ENGLISH)]
+    with session_factory() as session:
+        transition(session.get(Post, replaced.id), PostStatus.DISCARDED)
+        retry = Post(brief_id=brief.id, channel="x", language=Language.ENGLISH, caption="", parent_post_id=replaced.id)
+        session.add(retry)
+        session.commit()
+        retry_id = retry.id
+    image_calls_before, text_calls_before = len(fake_images.calls), len(fake_text.calls)
+
+    generate()
+
+    x_image = SPECS["x"].image
+    assert [(call.width, call.height) for call in fake_images.calls[image_calls_before:]] == [(x_image.width, x_image.height)]
+    assert len(fake_text.calls) - text_calls_before == 2  # one scene call, one English copy call
+    assert len(fake_text.copy_calls(Language.ENGLISH)) == 2 and len(fake_text.copy_calls(Language.BENGALI)) == 1
+    retry_copy_prompt = fake_text.copy_calls(Language.ENGLISH)[-1].prompt
+    assert "- x:" in retry_copy_prompt and "- instagram:" not in retry_copy_prompt
+
+    with session_factory() as session:
+        regenerated = session.get(Post, retry_id)
+        assert regenerated.generation_status == GenerationStatus.READY
+        for earlier in first_run.values():
+            unchanged = session.get(Post, earlier.id)
+            assert unchanged.image_path == earlier.image_path
+            assert unchanged.generation_status == GenerationStatus.READY
+    x_bengali_id = first_run[("x", Language.BENGALI)].id
+    assert (brief_dir(media_dir, brief) / base_image_filename("x", [x_bengali_id, replaced.id])).exists()
+    assert (brief_dir(media_dir, brief) / base_image_filename("x", [retry_id])).exists()
+
+
+def test_on_a_shared_local_gpu_every_text_call_finishes_before_any_image(
+    brief, fake_text, fake_images, session_factory, media_dir
+):
+    text_calls_done_at_each_image = []
+    original_generate = fake_images.generate
+
+    def recording_generate(prompt, width, height):
+        text_calls_done_at_each_image.append(len(fake_text.calls))
+        return original_generate(prompt, width, height)
+
+    fake_images.generate = recording_generate
+    clients = GenerationClients(text=fake_text, images=fake_images, text_before_images=True)
+
+    run_brief_generation(brief.id, clients, session_factory, media_dir)
+
+    all_text_calls = 1 + len(Language)  # one scene call plus one copy call per language
+    assert text_calls_done_at_each_image == [all_text_calls] * len(SPECS)
 
 
 def test_each_language_is_written_by_its_own_call_from_the_brief_alone(generate, fake_text):
@@ -116,6 +187,48 @@ def test_each_language_is_written_by_its_own_call_from_the_brief_alone(generate,
         assert english_copy.headline not in bengali_calls[0].prompt
         assert bengali_copy.caption not in english_calls[0].prompt
         assert posts[(channel, Language.BENGALI)].caption == bengali_copy.caption
+
+
+def test_copy_is_written_for_each_channels_photo(generate, fake_text):
+    """The scene is planned first; both languages then write for the same photo, never from each other's copy."""
+    generate()
+
+    assert fake_text.calls[0].schema is SceneSet
+    copy_calls = [call for call in fake_text.calls if call.schema is CopySet]
+    assert len(copy_calls) == len(Language)
+    for call in copy_calls:
+        for channel in SPECS:
+            assert f"- {channel}: {fake_scene(channel)}" in call.prompt
+
+
+def test_the_headline_zone_the_scene_chose_reaches_the_image_prompt_and_the_overlay(
+    generate, fake_text, fake_images, monkeypatch
+):
+    fake_text.scene_zones = {"x": "left", "linkedin": "Right ", "instagram": "left"}  # instagram is too narrow
+    overlaid_zones = {}
+    real_overlay = generation_service.overlay_headline
+
+    def recording_overlay(image_bytes, headline, preferred_zone):
+        with Image.open(io.BytesIO(image_bytes)) as image:
+            overlaid_zones[image.size] = preferred_zone
+        return real_overlay(image_bytes, headline, preferred_zone)
+
+    monkeypatch.setattr(generation_service, "overlay_headline", recording_overlay)
+
+    generate()
+
+    expected = {"x": TextZone.LEFT, "linkedin": TextZone.RIGHT, "instagram": DEFAULT_TEXT_ZONE}
+    prompts = {(call.width, call.height): call.prompt for call in fake_images.calls}
+    for channel, zone in expected.items():
+        size = (SPECS[channel].image.width, SPECS[channel].image.height)
+        assert HEADLINE_ZONE_CLAUSES[zone] in prompts[size]
+        assert overlaid_zones[size] == zone
+
+
+def test_a_valid_zone_from_the_scene_writer_is_kept(generate, fake_images):
+    generate()
+
+    assert all(HEADLINE_ZONE_CLAUSES[TextZone(FAKE_TEXT_ZONE)] in call.prompt for call in fake_images.calls)
 
 
 def test_every_image_prompt_forbids_text(generate, fake_images):
@@ -178,6 +291,7 @@ def test_scene_failure_fails_every_post_with_the_reason(generate, fake_text, fak
     posts = generate()
 
     assert not fake_images.calls
+    assert not [call for call in fake_text.calls if call.schema is CopySet]  # no quota spent on copy
     assert all(post.generation_status == GenerationStatus.FAILED for post in posts.values())
     assert all(post.generation_error == "Gemini quota exhausted" for post in posts.values())
 
@@ -238,10 +352,83 @@ def test_interrupted_generation_is_marked_failed_on_startup(session, brief):
     ],
 )
 def test_limit_problems_are_named(copy, expected_problem):
-    problems = limit_problems("x", copy, SPECS["x"])
+    problems = limit_problems("x", copy, SPECS["x"], Language.ENGLISH)
 
     assert any(expected_problem in problem for problem in problems)
 
 
-def test_copy_within_limits_has_no_problems():
-    assert limit_problems("x", default_copy(Language.BENGALI, "x"), SPECS["x"]) == []
+@pytest.mark.parametrize("language", list(Language))
+def test_copy_within_limits_has_no_problems(language):
+    assert limit_problems("x", default_copy(language, "x"), SPECS["x"], language) == []
+
+
+BENGALI_X_COPY = ChannelCopy(
+    channel="x",
+    headline="পহেলা বৈশাখ কালেকশন",
+    caption="নতুন বছরের দেশি পোশাকের সংগ্রহ দেখতে আজই আমাদের বুটিকে চলে আসুন।",
+    hashtags=["PohelaBoishakh"],
+)
+
+
+def test_english_post_written_in_bengali_is_a_problem():
+    """The real failure seen live: a fallback model wrote the English X post in Bengali."""
+    problems = limit_problems("x", BENGALI_X_COPY, SPECS["x"], Language.ENGLISH)
+
+    assert any("headline must be written in English, but 100% of its letters are Bengali" in p for p in problems)
+    assert any("caption must be written in English" in p for p in problems)
+
+
+def test_bengali_post_written_in_english_is_a_problem():
+    problems = limit_problems("x", default_copy(Language.ENGLISH, "x"), SPECS["x"], Language.BENGALI)
+
+    assert any("headline must be written in Bengali, but only 0% of its letters are Bengali" in p for p in problems)
+
+
+@pytest.mark.parametrize(
+    ("copy", "language"),
+    [
+        (
+            ChannelCopy(channel="x", headline="Aarong-এ নতুন বৈশাখী সাজ", caption="Aarong-এ আসুন, নতুন সাজে সাজুন", hashtags=[]),
+            Language.BENGALI,
+        ),
+        (
+            ChannelCopy(channel="x", headline="Shubho Noboborsho", caption="Happy new year to all of Dhaka! শুভ", hashtags=[]),
+            Language.ENGLISH,
+        ),
+        (ChannelCopy(channel="x", headline="New colours", caption="Visit us", hashtags=["পহেলাবৈশাখ"]), Language.ENGLISH),
+    ],
+    ids=["bengali-with-latin-brand", "english-with-bengali-greeting", "hashtags-are-exempt"],
+)
+def test_a_little_of_the_other_script_is_fine(copy, language):
+    assert limit_problems("x", copy, SPECS["x"], language) == []
+
+
+def test_wrong_language_copy_gets_a_corrective_retry(generate, fake_text):
+    fake_text.copy_versions[(Language.ENGLISH, "x")] = [BENGALI_X_COPY, default_copy(Language.ENGLISH, "x")]
+
+    posts = generate()
+
+    english_calls = fake_text.copy_calls(Language.ENGLISH)
+    assert len(english_calls) == 2
+    assert "must be written in English" in english_calls[1].prompt
+    assert posts[("x", Language.ENGLISH)].headline == default_copy(Language.ENGLISH, "x").headline
+
+
+def test_wrong_language_copy_after_the_retry_fails_the_post(generate, fake_text):
+    fake_text.copy_versions[(Language.ENGLISH, "x")] = [BENGALI_X_COPY]
+
+    posts = generate()
+
+    failed = posts[("x", Language.ENGLISH)]
+    assert failed.generation_status == GenerationStatus.FAILED
+    assert "must be written in English" in failed.generation_error
+
+
+@pytest.mark.parametrize("language", list(Language))
+def test_copy_prompts_insist_on_their_own_language(language):
+    context = BriefContext(title="t", goal="g", audience="a", tone="warm")
+
+    prompt = copy_prompt(context, language, SPECS, scenes={})
+
+    expected = "in English, even if the brief" if language == Language.ENGLISH else "ব্রিফ ইংরেজিতে লেখা থাকলেও"
+    assert expected in prompt

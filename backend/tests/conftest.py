@@ -10,9 +10,9 @@ from app.channels import get_channel_specs
 from app.db import Base, get_session, make_engine
 from app.generation_clients import GenerationClients
 from app.main import app
-from app.models import Brief, Language, Post, PostStatus
+from app.models import Brief, GenerationStatus, Language, Post, PostStatus
 from app.post_status import transition
-from app.routes.briefs import get_generation_clients, get_media_dir, get_session_factory
+from app.dependencies import get_generation_clients, get_media_dir, get_session_factory
 from tests.fakes import FakeImageClient, FakeTextClient
 
 TEST_REJECTION_REASON = "Caption exceeds the channel limit (test)"
@@ -106,8 +106,22 @@ def brief(session: Session) -> Brief:
 def make_post_in_status(session: Session, brief: Brief) -> Callable[..., Post]:
     """Create a committed post that reached `status` through real transition() calls."""
 
-    def make(status: PostStatus, *, channel: str = "instagram", language: Language = Language.ENGLISH) -> Post:
-        post = Post(brief=brief, channel=channel, language=language, caption="Test caption", hashtags=["test"])
+    def make(
+        status: PostStatus,
+        *,
+        channel: str = "instagram",
+        language: Language = Language.ENGLISH,
+        generation: GenerationStatus = GenerationStatus.READY,
+    ) -> Post:
+        # Generation defaults to ready, because only ready drafts can be approved.
+        post = Post(
+            brief=brief,
+            channel=channel,
+            language=language,
+            caption="Test caption",
+            hashtags=["test"],
+            generation_status=generation,
+        )
         session.add(post)
         session.flush()
         for next_status in TRANSITION_PATH_FROM_DRAFT[status]:

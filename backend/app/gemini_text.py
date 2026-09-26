@@ -1,7 +1,8 @@
 """Gemini text generation (copy and image scenes) with timeouts, retries, model fallback and clear errors.
 
-Each model is retried with backoff on transient errors. If a model stays overloaded (503) or runs out of
-free-tier quota (429), the next model in the list is tried; any other error fails at once.
+Free-tier quotas are per model, so the client walks a list of models. An overloaded model (5xx) gets one
+retry; a model out of quota (429) or no longer offered (404) is skipped at once, since waiting seconds
+won't bring it back. Any other error (e.g. a bad request) fails without trying further models.
 """
 
 import logging
@@ -13,12 +14,13 @@ from google import genai
 from google.genai import errors, types
 from pydantic import BaseModel, ValidationError
 
-MAX_ATTEMPTS_PER_MODEL = 4
+MAX_ATTEMPTS_PER_MODEL = 2
 RETRY_INITIAL_DELAY_SECONDS = 2.0
-RETRY_MAX_DELAY_SECONDS = 16.0
-RETRYABLE_STATUS_CODES = [429, 500, 502, 503, 504]
+RETRY_MAX_DELAY_SECONDS = 8.0
+# Retried on the same model. 429 is deliberately absent: a used-up daily quota does not recover in seconds.
+RETRYABLE_STATUS_CODES = [500, 502, 503, 504]
 # Worth moving on to the next model rather than failing the post.
-FALLBACK_STATUS_CODES = frozenset({429, 500, 502, 503, 504})
+FALLBACK_STATUS_CODES = frozenset({404, 429, 500, 502, 503, 504})
 HTTP_TOO_MANY_REQUESTS = 429
 MILLISECONDS_PER_SECOND = 1000
 
@@ -64,6 +66,11 @@ class GeminiTextClient:
             except _ModelUnavailable as unavailable:
                 logger.warning("Gemini model %s unavailable (%s); trying the next model", model, unavailable)
                 failures.append(f"{model}: {unavailable}")
+            except TextGenerationError as error:
+                if not failures:
+                    raise
+                # Keep the earlier models' reasons: they explain why this model was reached at all.
+                raise TextGenerationError(f"{' | '.join(failures)} | {model}: {error}") from error
         quota_hint = (
             " The free-tier daily quota resets at midnight Pacific time."
             if any(f"HTTP {HTTP_TOO_MANY_REQUESTS}" in failure for failure in failures)

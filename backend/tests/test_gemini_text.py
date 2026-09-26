@@ -7,12 +7,12 @@ import httpx
 import pytest
 from google.genai import errors
 
-from app.gemini_text import GeminiTextClient, TextGenerationError
+from app.gemini_text import RETRYABLE_STATUS_CODES, GeminiTextClient, TextGenerationError
 from app.prompts import ChannelScene, SceneSet
 
 PRIMARY_MODEL = "gemini-primary"
 FALLBACK_MODEL = "gemini-fallback"
-EXPECTED = SceneSet(scenes=[ChannelScene(channel="x", scene="A wide festive scene")])
+EXPECTED = SceneSet(scenes=[ChannelScene(channel="x", text_zone="right", scene="A wide festive scene")])
 
 
 def overloaded() -> errors.APIError:
@@ -21,6 +21,10 @@ def overloaded() -> errors.APIError:
 
 def out_of_quota() -> errors.APIError:
     return errors.ClientError(429, {"error": {"code": 429, "message": "quota", "status": "RESOURCE_EXHAUSTED"}})
+
+
+def model_gone() -> errors.APIError:
+    return errors.ClientError(404, {"error": {"code": 404, "message": "no longer available", "status": "NOT_FOUND"}})
 
 
 def bad_request() -> errors.APIError:
@@ -56,7 +60,11 @@ def test_primary_model_is_used_when_it_works():
     assert fake_models.called_models == [PRIMARY_MODEL]
 
 
-@pytest.mark.parametrize("failure", [overloaded(), out_of_quota(), httpx.ReadTimeout("slow")], ids=["503", "429", "timeout"])
+@pytest.mark.parametrize(
+    "failure",
+    [overloaded(), out_of_quota(), model_gone(), httpx.ReadTimeout("slow")],
+    ids=["503", "429", "404", "timeout"],
+)
 def test_falls_back_to_the_next_model_when_the_primary_is_unavailable(failure):
     fake_models = FakeModels(failures={PRIMARY_MODEL: failure})
 
@@ -82,6 +90,21 @@ def test_when_every_model_fails_the_error_names_each_one():
     assert f"{PRIMARY_MODEL}: HTTP 503" in message
     assert f"{FALLBACK_MODEL}: HTTP 429" in message
     assert "resets at midnight Pacific" in message
+
+
+def test_a_later_models_hard_error_keeps_the_earlier_reasons():
+    fake_models = FakeModels(failures={PRIMARY_MODEL: out_of_quota(), FALLBACK_MODEL: bad_request()})
+
+    with pytest.raises(TextGenerationError) as raised:
+        make_client(fake_models).generate("prompt", SceneSet)
+
+    message = str(raised.value)
+    assert f"{PRIMARY_MODEL}: HTTP 429" in message
+    assert f"{FALLBACK_MODEL}: Gemini request failed (HTTP 400)" in message
+
+
+def test_quota_errors_are_not_retried_on_the_same_model():
+    assert 429 not in RETRYABLE_STATUS_CODES
 
 
 def test_malformed_json_is_a_clear_error():

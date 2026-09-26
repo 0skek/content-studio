@@ -1,5 +1,5 @@
 import { useEffect, useState } from 'react'
-import { api, errorText, type Brief, type BriefSummary, type Channel } from './api'
+import { api, errorText, type Brief, type BriefSummary, type Channel, type Health } from './api'
 import { BriefForm } from './components/BriefForm'
 import { BriefList } from './components/BriefList'
 import { BriefView } from './components/BriefView'
@@ -9,12 +9,14 @@ function App() {
   const [briefs, setBriefs] = useState<BriefSummary[]>([])
   const [selectedBriefId, setSelectedBriefId] = useState<number | null>(null)
   const [loadError, setLoadError] = useState<string | null>(null)
+  const [health, setHealth] = useState<Health | null>(null)
 
   function showLoadError(caught: unknown) {
     setLoadError(errorText(caught))
   }
 
   useEffect(() => {
+    api.health().then(setHealth).catch(showLoadError)
     api.listChannels().then(setChannels).catch(showLoadError)
     api.listBriefs().then(setBriefs).catch(showLoadError)
   }, [])
@@ -28,6 +30,11 @@ function App() {
     <div className="app">
       <header className="app-header">
         <h1>AI Content Studio</h1>
+        {health && !health.production_providers && (
+          <span className="dev-chip" title="Local development providers are on; switch them off in .env before the demo.">
+            DEV: text={health.text_provider} · images={health.image_provider}
+          </span>
+        )}
         {loadError && <p className="error">{loadError}</p>}
       </header>
       <div className="layout">

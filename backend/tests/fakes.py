@@ -10,6 +10,11 @@ from app.models import Language
 from app.prompts import BENGALI_COPY_OPENING, ChannelCopy, ChannelScene, CopySet, SceneSet
 
 FAKE_IMAGE_COLOR = (40, 90, 160)
+FAKE_TEXT_ZONE = "top"
+
+
+def fake_scene(channel: str) -> str:
+    return f"A distinct {channel} scene"
 
 
 def make_jpeg(width: int, height: int, color: tuple[int, int, int] = FAKE_IMAGE_COLOR) -> bytes:
@@ -50,6 +55,8 @@ class FakeTextClient:
     # (language, channel) -> the copy to return on attempt 1, 2, ... (the last one repeats).
     copy_versions: dict[tuple[Language, str], list[ChannelCopy]] = field(default_factory=dict)
     scene_error: Exception | None = None
+    # channel -> the headline zone the scene writer picks (FAKE_TEXT_ZONE if not listed).
+    scene_zones: dict[str, str] = field(default_factory=dict)
     copy_errors: dict[Language, Exception] = field(default_factory=dict)
     calls: list[TextCall] = field(default_factory=list)
     _copy_attempts: dict[Language, int] = field(default_factory=dict)
@@ -61,7 +68,12 @@ class FakeTextClient:
         if schema is SceneSet:
             if self.scene_error:
                 raise self.scene_error
-            return SceneSet(scenes=[ChannelScene(channel=c, scene=f"A distinct {c} scene") for c in self.channels])
+            return SceneSet(
+                scenes=[
+                    ChannelScene(channel=c, text_zone=self.scene_zones.get(c, FAKE_TEXT_ZONE), scene=fake_scene(c))
+                    for c in self.channels
+                ]
+            )
 
         language = copy_language_of(prompt)
         if language in self.copy_errors:

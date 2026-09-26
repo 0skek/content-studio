@@ -21,7 +21,7 @@ def test_all_tables_round_trip(session, brief, make_post_in_status):
     assert brief.created_at.utcoffset() == timedelta(0)
     assert post.language == Language.BENGALI
     assert post.hashtags == ["test"]
-    assert post.generation_status == GenerationStatus.PENDING
+    assert post.generation_status == GenerationStatus.READY
     assert post.generation_error is None
     assert post.metrics[0].likes == 85
     assert report.cited_post_ids == [post.id]
@@ -41,6 +41,13 @@ def test_unknown_status_value_fails_the_check_constraint(session, make_post_in_s
 
     with pytest.raises(IntegrityError, match="CHECK"):
         session.execute(text("UPDATE posts SET status = 'bogus' WHERE id = :id"), {"id": post.id})
+
+
+def test_new_posts_start_as_drafts_with_pending_generation(brief):
+    post = Post(brief=brief, channel="x", language=Language.ENGLISH, caption="")
+
+    assert post.status == PostStatus.DRAFT
+    assert post.generation_status == GenerationStatus.PENDING
 
 
 def test_generation_progress_is_independent_of_approval_status(session, make_post_in_status):
@@ -89,6 +96,15 @@ def test_retry_keeps_lineage_to_the_discarded_post(session, brief, make_post_in_
     assert retry.status == PostStatus.DRAFT
     assert retry.parent_post_id == discarded.id
     assert discarded.retries == [retry]
+
+
+def test_a_post_can_have_only_one_retry(session, brief, make_post_in_status):
+    discarded = make_post_in_status(PostStatus.DISCARDED)
+    for caption in ("First retry", "Second retry"):
+        session.add(Post(brief=brief, channel="x", language=Language.ENGLISH, caption=caption, parent=discarded))
+
+    with pytest.raises(IntegrityError, match="UNIQUE"):
+        session.commit()
 
 
 def test_naive_datetime_is_refused(session, make_post_in_status):

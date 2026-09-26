@@ -64,6 +64,14 @@ export interface Channel {
   length_counting: LengthCounting
 }
 
+export interface Health {
+  status: string
+  text_provider: string
+  image_provider: string
+  // False when local development providers (Ollama / local image server) are active.
+  production_providers: boolean
+}
+
 export class ApiError extends Error {}
 
 interface ValidationIssue {
@@ -98,6 +106,7 @@ async function request<T>(path: string, init?: RequestInit): Promise<T> {
 }
 
 export const api = {
+  health: () => request<Health>('/health'),
   listChannels: () => request<Channel[]>('/channels'),
   listBriefs: () => request<BriefSummary[]>('/briefs'),
   getBrief: (briefId: number) => request<Brief>(`/briefs/${briefId}`),
@@ -107,6 +116,10 @@ export const api = {
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify(input),
     }),
+  approvePost: (postId: number) => request<Post>(`/posts/${postId}/approve`, { method: 'POST' }),
+  discardPost: (postId: number) => request<Post>(`/posts/${postId}/discard`, { method: 'POST' }),
+  // Returns the new draft; its generation runs in the background.
+  retryPost: (postId: number) => request<Post>(`/posts/${postId}/retry`, { method: 'POST' }),
 }
 
 export function isGenerating(post: Post): boolean {

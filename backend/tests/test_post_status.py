@@ -2,8 +2,8 @@ import itertools
 
 import pytest
 
-from app.models import PostStatus
-from app.post_status import ALLOWED_TRANSITIONS, InvalidTransition, transition
+from app.models import GenerationStatus, PostStatus
+from app.post_status import ALLOWED_TRANSITIONS, GenerationNotReady, InvalidTransition, transition
 
 ALLOWED_PAIRS = [(source, target) for source, targets in ALLOWED_TRANSITIONS.items() for target in targets]
 DISALLOWED_PAIRS = [pair for pair in itertools.product(PostStatus, repeat=2) if pair not in ALLOWED_PAIRS]
@@ -75,6 +75,27 @@ def test_rejection_reason_is_stored(make_post_in_status):
 
     assert post.status == PostStatus.REJECTED
     assert post.rejection_reason == REJECTION_REASON
+
+
+@pytest.mark.parametrize(
+    "generation", [GenerationStatus.PENDING, GenerationStatus.GENERATING, GenerationStatus.FAILED]
+)
+def test_approving_requires_finished_generation(make_post_in_status, generation):
+    draft = make_post_in_status(PostStatus.DRAFT, generation=generation)
+
+    with pytest.raises(GenerationNotReady) as raised:
+        transition(draft, PostStatus.APPROVED)
+
+    assert str(raised.value).startswith(f"Post {draft.id} can't be approved: its generation is {generation}")
+    assert draft.status == PostStatus.DRAFT
+
+
+def test_a_draft_that_is_not_ready_can_still_be_discarded(make_post_in_status):
+    draft = make_post_in_status(PostStatus.DRAFT, generation=GenerationStatus.FAILED)
+
+    transition(draft, PostStatus.DISCARDED)
+
+    assert draft.status == PostStatus.DISCARDED
 
 
 def test_reason_on_a_non_reject_transition_is_refused(make_post_in_status):

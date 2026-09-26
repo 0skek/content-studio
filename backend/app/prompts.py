@@ -1,22 +1,36 @@
-"""Prompt templates for copy (one per language, written natively) and per-channel image scenes.
+"""Prompt templates for per-channel photo scenes and for copy (one per language, written natively).
+
+The scene is planned first; each language's copy is then written for that photo, so words and picture tell one
+story. Neither language ever sees the other's copy (rule 6).
 
 Channel tone, length, CTA and hashtag style come from channels.json; nothing channel-specific is hardcoded here.
+The art-direction rules in scene_prompt are adapted from docs/generation_prompts.md.
 """
 
 from collections.abc import Mapping, Sequence
 from dataclasses import dataclass
 
-from pydantic import BaseModel
+from pydantic import BaseModel, Field
 
 from app.caption_length import LengthCounting
 from app.channels import ChannelSpec
+from app.headline_overlay import TextZone, allowed_text_zones
 from app.models import Language
 
 HEADLINE_MAX_WORDS = 8
 
 # Appended in code to every image prompt, whatever the scene writer returned. Headlines are overlaid later.
-NO_TEXT_CLAUSE = "No text, no letters, no words, no numbers, no typography, no logos, no signage, no watermark."
-HEADLINE_SPACE_CLAUSE = "Keep the bottom third of the frame calm and uncluttered."
+NO_TEXT_CLAUSE = (
+    "No text, no letters, no words, no numbers, no typography, no logos, no brand names on clothes or packaging, "
+    "no signage, no watermark."
+)
+QUIET_SPACE = "quiet, empty space (open sky, a plain wall or soft-focus background) with no people in it"
+HEADLINE_ZONE_CLAUSES = {
+    TextZone.TOP: f"The top third of the frame is {QUIET_SPACE}.",
+    TextZone.BOTTOM: f"The bottom third of the frame is {QUIET_SPACE}.",
+    TextZone.LEFT: f"The left third of the frame is {QUIET_SPACE}; the subject is in the right two thirds.",
+    TextZone.RIGHT: f"The right third of the frame is {QUIET_SPACE}; the subject is in the left two thirds.",
+}
 
 
 class ChannelCopy(BaseModel):
@@ -32,7 +46,8 @@ class CopySet(BaseModel):
 
 class ChannelScene(BaseModel):
     channel: str
-    scene: str
+    text_zone: str = Field(description="Where the headline goes: one of the channel's headline zones.")
+    scene: str = Field(description="The image prompt, starting with the composition.")
 
 
 class SceneSet(BaseModel):
@@ -48,8 +63,8 @@ class BriefContext:
     insights: tuple[str, ...] = ()
 
 
-def final_image_prompt(scene: str) -> str:
-    return f"{scene.strip()} {HEADLINE_SPACE_CLAUSE} {NO_TEXT_CLAUSE}"
+def final_image_prompt(scene: str, text_zone: TextZone) -> str:
+    return f"{scene.strip()} {HEADLINE_ZONE_CLAUSES[text_zone]} {NO_TEXT_CLAUSE}"
 
 
 def _orientation(width: int, height: int) -> str:
@@ -89,7 +104,9 @@ def _bengali_channel_line(channel: str, spec: ChannelSpec) -> str:
     )
 
 
-def _english_copy_prompt(brief: BriefContext, specs: Mapping[str, ChannelSpec], feedback: Sequence[str]) -> str:
+def _english_copy_prompt(
+    brief: BriefContext, specs: Mapping[str, ChannelSpec], scenes: Mapping[str, str], feedback: Sequence[str]
+) -> str:
     sections = [
         ENGLISH_COPY_OPENING,
         "Brief\n"
@@ -101,11 +118,20 @@ def _english_copy_prompt(brief: BriefContext, specs: Mapping[str, ChannelSpec], 
         "Channels. Each post must feel native to its channel (tone, length, call to action, hashtag style):\n"
         + "\n".join(_english_channel_line(channel, spec) for channel, spec in specs.items())
     )
+    if scenes:
+        sections.append(
+            "Photos. Each post is published with the photo described below, and its headline is set on that photo. "
+            "Write each channel's headline and caption for its photo, so the words and the picture tell one story. "
+            "The descriptions only show you the picture: do not state their details (fabrics, colours, places) "
+            "as facts about the product.\n" + _scene_lines(scenes)
+        )
     sections.append(
         "Rules\n"
+        "- Write every headline and caption in English, even if the brief above is written in Bengali.\n"
         "- Use only facts stated in the brief. Do not invent addresses, prices, discounts, dates, phone numbers, "
         "URLs or product details.\n"
-        f"- headline: at most {HEADLINE_MAX_WORDS} words, no hashtags, no emoji. It is printed on the image.\n"
+        f"- headline: at most {HEADLINE_MAX_WORDS} words, no hashtags, no emoji. It is set large on the photo, "
+        "so make it one strong line that fits what the photo shows.\n"
         "- hashtags: the words only, without the '#' sign.\n"
         f"- Return exactly one post per channel, with these channel ids: {', '.join(specs)}."
     )
@@ -117,7 +143,9 @@ def _english_copy_prompt(brief: BriefContext, specs: Mapping[str, ChannelSpec], 
     return "\n\n".join(sections)
 
 
-def _bengali_copy_prompt(brief: BriefContext, specs: Mapping[str, ChannelSpec], feedback: Sequence[str]) -> str:
+def _bengali_copy_prompt(
+    brief: BriefContext, specs: Mapping[str, ChannelSpec], scenes: Mapping[str, str], feedback: Sequence[str]
+) -> str:
     sections = [
         BENGALI_COPY_OPENING,
         "ব্রিফ\n"
@@ -130,11 +158,20 @@ def _bengali_copy_prompt(brief: BriefContext, specs: Mapping[str, ChannelSpec], 
         "চ্যানেলের ধরন ইংরেজিতে বর্ণনা করা আছে, কিন্তু তোমার লেখা হবে পুরোপুরি বাংলায়:\n"
         + "\n".join(_bengali_channel_line(channel, spec) for channel, spec in specs.items())
     )
+    if scenes:
+        sections.append(
+            "ছবি। প্রতিটি পোস্ট নিচে বর্ণনা করা ছবির সঙ্গে প্রকাশ হবে, আর headline বসবে সেই ছবির উপর। "
+            "প্রতিটি চ্যানেলের headline ও caption তার ছবির সঙ্গে মিলিয়ে লেখো, যাতে লেখা আর ছবি একই গল্প বলে। "
+            "বর্ণনা ইংরেজিতে, শুধু ছবিটা বোঝানোর জন্য: অনুবাদ করবে না, আর এর খুঁটিনাটি (কাপড়, রং, জায়গা) "
+            "পণ্যের তথ্য হিসেবে লিখবে না।\n" + _scene_lines(scenes)
+        )
     sections.append(
         "নিয়ম\n"
+        "- ব্রিফ ইংরেজিতে লেখা থাকলেও প্রতিটি headline ও caption বাংলায় লিখবে।\n"
         "- শুধু ব্রিফে দেওয়া তথ্য ব্যবহার করো। ঠিকানা, দাম, ছাড়, তারিখ, ফোন নম্বর, ওয়েবসাইট বা পণ্যের বিবরণ "
         "বানিয়ে লিখবে না।\n"
-        f"- headline: সর্বোচ্চ {HEADLINE_MAX_WORDS} শব্দ, হ্যাশট্যাগ বা ইমোজি ছাড়া। এটি ছবির উপর বসানো হবে।\n"
+        f"- headline: সর্বোচ্চ {HEADLINE_MAX_WORDS} শব্দ, হ্যাশট্যাগ বা ইমোজি ছাড়া। এটি ছবির উপর বড় করে বসবে, "
+        "তাই ছবির সঙ্গে মানানসই একটি জোরালো লাইন লেখো।\n"
         "- hashtags: '#' চিহ্ন ছাড়া শুধু শব্দ; বাংলাদেশে যা স্বাভাবিকভাবে ব্যবহৃত হয় (বাংলা বা ইংরেজি)।\n"
         f"- প্রতিটি চ্যানেলের জন্য ঠিক একটি পোস্ট দাও, চ্যানেল আইডি হুবহু: {', '.join(specs)}।"
     )
@@ -146,27 +183,45 @@ def _bengali_copy_prompt(brief: BriefContext, specs: Mapping[str, ChannelSpec], 
     return "\n\n".join(sections)
 
 
+def _scene_lines(scenes: Mapping[str, str]) -> str:
+    return "\n".join(f"- {channel}: {scene}" for channel, scene in scenes.items())
+
+
 def copy_prompt(
-    brief: BriefContext, language: Language, specs: Mapping[str, ChannelSpec], feedback: Sequence[str] = ()
+    brief: BriefContext,
+    language: Language,
+    specs: Mapping[str, ChannelSpec],
+    scenes: Mapping[str, str],
+    feedback: Sequence[str] = (),
 ) -> str:
-    """Each language gets its own prompt from the brief alone; no other language's output ever goes in."""
+    """Each language gets its own prompt from the brief and the channel photos; no other language's copy ever
+    goes in."""
+    scenes = {channel: scene for channel, scene in scenes.items() if channel in specs}
     if language == Language.BENGALI:
-        return _bengali_copy_prompt(brief, specs, feedback)
-    return _english_copy_prompt(brief, specs, feedback)
+        return _bengali_copy_prompt(brief, specs, scenes, feedback)
+    return _english_copy_prompt(brief, specs, scenes, feedback)
 
 
 # ---------------------------------------------------------------- image scene prompt
 
 
+def _zone_options(spec: ChannelSpec) -> str:
+    zones = [zone.value for zone in allowed_text_zones(spec.image.width, spec.image.height)]
+    return ", ".join(zones[:-1]) + f" or {zones[-1]}"
+
+
 def scene_prompt(brief: BriefContext, specs: Mapping[str, ChannelSpec]) -> str:
     channel_lines = "\n".join(
         f"- {channel} ({spec.image.width}x{spec.image.height}, {spec.image.aspect_ratio} "
-        f"{_orientation(spec.image.width, spec.image.height)}): {spec.style.visual_style}"
+        f"{_orientation(spec.image.width, spec.image.height)}): {spec.style.visual_style} "
+        f"Headline zone: {_zone_options(spec)}."
         for channel, spec in specs.items()
     )
     sections = [
-        "You are an art director. Write one image-generation prompt per channel for this campaign. "
-        "Each channel gets its own scene and composition; do not reuse one scene across channels.",
+        "You are an art director and photographer for Bangladeshi brands. Plan one photograph per channel for "
+        "this campaign; an image model renders each from your prompt. Each channel gets its own scene and "
+        "composition; do not reuse one scene across channels. The headline is added later as typography, so the "
+        "photo itself carries no text.",
         "Brief\n"
         f"- Title: {brief.title}\n- Goal: {brief.goal}\n- Audience: {brief.audience}\n- Tone: {brief.tone}",
     ]
@@ -174,12 +229,31 @@ def scene_prompt(brief: BriefContext, specs: Mapping[str, ChannelSpec]) -> str:
         sections.append("What worked before:\n" + "\n".join(f"- {i}" for i in brief.insights))
     sections.append(f"Channels\n{channel_lines}")
     sections.append(
+        "How to plan each photo\n"
+        "- Subject: name what is literally in the frame, in concrete nouns. Whatever the brief is about (product, "
+        "occasion, place, craft, audience) must be physically present and recognisable. If the brief speaks to "
+        "families, show a family.\n"
+        "- Authentic detail: clothes, fabrics, objects, surfaces and settings that someone in Bangladesh would "
+        "recognise as true, not a generic international version.\n"
+        "- Moment: let the goal choose it. A launch wants the product seen clearly; a celebration wants people "
+        "caught mid-moment, not posing.\n"
+        "- Avoid the stock-photo default for this subject, such as a model smiling at the camera in front of a "
+        "plain backdrop.\n"
+        "- Light: commit to one lighting design and state its direction, quality and colour temperature (low warm "
+        "sun from one side, a single soft window, a dusk sky). Flat, even light looks like a generic AI render.\n"
+        "- Colour: one dominant tone, a secondary colour and a small accent; let the subject's real colours lead.\n"
+        "- Headline zone: choose text_zone from that channel's options. Place the subject off-centre, away from "
+        "it, and make that zone genuinely quiet: say what fills it (open sky, a plain wall, soft-focus background, "
+        "calm water, an empty table top), with no people, faces or hands in it."
+    )
+    sections.append(
         "Rules for every prompt\n"
-        "- Describe only what is visible: subject, setting, composition, lighting, colours, mood. "
-        "Photographic and culturally accurate for Bangladesh.\n"
+        "- Begin with the composition: where the subject sits and what fills the headline zone. Then the "
+        "subject's details, the light and the colours. 50 to 90 words, photographic.\n"
         "- No text of any kind: no words, letters, numbers, logos, signs, shop signage, banners, posters or labels. "
         "Avoid scenes that naturally contain signs, such as shopfronts or street markets with boards.\n"
-        "- Keep the bottom third of the frame calm and uncluttered; a headline will be placed there.\n"
+        "- Clothes, bags and packaging are plain and unbranded.\n"
+        "- If the brief names a real person, do not show their face; show their work or their place instead.\n"
         f"- Return exactly one prompt per channel, with these channel ids: {', '.join(specs)}."
     )
     return "\n\n".join(sections)

@@ -2,14 +2,18 @@
 
 - Rule 1: each channel's image is its own generation at that channel's exact size. A wrong size fails the
   channel; nothing is ever resized or cropped.
-- Rule 6: each language's copy comes from its own call built from the brief alone; no language sees another's output.
+- Rule 6: each language's copy comes from its own call, built from the brief and the channel photos' scene
+  descriptions; no language ever sees another's copy.
+- The scene is planned first, so copy is written for the photo and the headline goes where the photo was composed
+  to leave room for it.
 - Every post the job starts ends `ready` or `failed` with a readable error, never stuck in `generating`.
 """
 
 import io
 import logging
-from collections.abc import Mapping
+from collections.abc import Iterable, Mapping
 from concurrent.futures import Future, ThreadPoolExecutor
+from concurrent.futures import wait as wait_for_futures
 from dataclasses import dataclass
 from pathlib import Path
 from typing import TypeVar
@@ -18,12 +22,13 @@ from PIL import Image, UnidentifiedImageError
 from sqlalchemy import update
 from sqlalchemy.orm import Session, sessionmaker
 
+from app.bengali_script import bengali_letter_share
 from app.caption_length import HASHTAG_PREFIX, LengthCounting, caption_length, published_text
 from app.channels import ChannelSpec, get_channel_specs
 from app.cloudflare_images import ImageGenerationError
 from app.gemini_text import TextGenerationError
 from app.generation_clients import GenerationClients, ImageClient, TextClient
-from app.headline_overlay import overlay_headline
+from app.headline_overlay import DEFAULT_TEXT_ZONE, TextZone, allowed_text_zones, overlay_headline
 from app.models import Brief, GenerationStatus, Language, Post
 from app.prompts import (
     HEADLINE_MAX_WORDS,
@@ -38,6 +43,10 @@ from app.prompts import (
 from app.schemas import BriefCreate
 
 MAX_COPY_ATTEMPTS = 2
+# Share of letters in Bengali script. English copy may quote a Bengali greeting; Bengali copy may name a brand
+# in Latin letters. A post written wholly in the other language is far outside either bound.
+MAX_BENGALI_SHARE_IN_ENGLISH_TEXT = 0.25
+MIN_BENGALI_SHARE_IN_BENGALI_TEXT = 0.6
 BRIEFS_MEDIA_SUBDIR = "briefs"
 INTERRUPTED_MESSAGE = "Generation was interrupted by a server restart."
 
@@ -109,11 +118,17 @@ def fail_interrupted_generation(session: Session) -> int:
 
 
 @dataclass(frozen=True)
+class PlannedScene:
+    scene: str
+    text_zone: TextZone
+
+
+@dataclass(frozen=True)
 class _ChannelJob:
     channel: str
     spec: ChannelSpec
     post_ids: dict[Language, int]
-    scenes: Future[dict[str, str]]
+    scenes: Future[dict[str, PlannedScene]]
     copies: dict[Language, Future[CopyOutcome]]
     images: ImageClient
     media_dir: Path
@@ -124,32 +139,47 @@ class _ChannelJob:
 def run_brief_generation(
     brief_id: int, clients: GenerationClients, session_factory: sessionmaker[Session], media_dir: Path
 ) -> None:
-    """Generate every pending post of a brief. Runs as a background task."""
+    """Generate every pending post of a brief. Runs as a background task.
+
+    A new brief has all its posts pending; a retry has just one. Only the channels and languages of pending
+    posts are generated, so a retry costs one image and one copy call.
+    """
     started = _start_generation(brief_id, session_factory)
     if started is None:
         return
-    context, languages, post_ids = started
+    context, brief_languages, post_ids = started
+    if not post_ids:
+        return
     failure_reason = "Generation stopped unexpectedly."
     try:
-        specs = get_channel_specs()
+        pending_channels = {channel for channel, _language in post_ids}
+        specs = {channel: spec for channel, spec in get_channel_specs().items() if channel in pending_channels}
+        languages = [language for language in brief_languages if any(pending == language for _, pending in post_ids)]
         brief_dir = media_dir / BRIEFS_MEDIA_SUBDIR / str(brief_id)
         brief_dir.mkdir(parents=True, exist_ok=True)
         with (
             ThreadPoolExecutor(max_workers=1 + len(languages), thread_name_prefix="text") as text_pool,
             ThreadPoolExecutor(max_workers=len(specs), thread_name_prefix="channel") as channel_pool,
         ):
+            # Copy is written for the photos, so each copy call waits for the scenes (it has its own worker).
             scenes = text_pool.submit(_generate_scenes, clients.text, context, specs)
             copies = {
-                language: text_pool.submit(_generate_copy, clients.text, context, language, specs)
+                language: text_pool.submit(_generate_copy, clients.text, context, language, specs, scenes)
                 for language in languages
             }
+            if clients.text_before_images:
+                wait_for_futures([scenes, *copies.values()])
             channel_jobs = [
                 channel_pool.submit(
                     _produce_channel,
                     _ChannelJob(
                         channel=channel,
                         spec=spec,
-                        post_ids={language: post_ids[(channel, language)] for language in languages},
+                        post_ids={
+                            language: post_ids[(channel, language)]
+                            for language in languages
+                            if (channel, language) in post_ids
+                        },
                         scenes=scenes,
                         copies=copies,
                         images=clients.images,
@@ -197,11 +227,11 @@ def _start_generation(
 def _produce_channel(job: _ChannelJob) -> None:
     """One channel: its own image at its own size, then one headline overlay per language."""
     try:
-        scene = _output_for_channel(job.channel, job.scenes.result(), "image scene")
-        image_prompt = final_image_prompt(scene)
+        planned = _output_for_channel(job.channel, job.scenes.result(), "image scene")
+        image_prompt = final_image_prompt(planned.scene, planned.text_zone)
         image_bytes = job.images.generate(image_prompt, job.spec.image.width, job.spec.image.height)
         _require_native_size(job.channel, image_bytes, job.spec)
-        (job.brief_dir / f"{job.channel}-base.jpg").write_bytes(image_bytes)
+        (job.brief_dir / base_image_filename(job.channel, job.post_ids.values())).write_bytes(image_bytes)
     except (TextGenerationError, ImageGenerationError, ImageSizeMismatch, UnusableChannelOutput, OSError) as error:
         logger.warning("Channel %s failed: %s", job.channel, error)
         _record_failure(job.session_factory, list(job.post_ids.values()), str(error))
@@ -213,7 +243,7 @@ def _produce_channel(job: _ChannelJob) -> None:
             if job.channel in outcome.problems:
                 raise UnusableChannelOutput(outcome.problems[job.channel])
             copy = _output_for_channel(job.channel, outcome.accepted, f"{language} copy")
-            final_bytes = overlay_headline(image_bytes, copy.headline)
+            final_bytes = overlay_headline(image_bytes, copy.headline, planned.text_zone)
             final_path = job.brief_dir / f"{job.channel}-{language}-post{post_id}.jpg"
             final_path.write_bytes(final_bytes)
         except (TextGenerationError, UnusableChannelOutput, OSError) as error:
@@ -228,6 +258,11 @@ def _produce_channel(job: _ChannelJob) -> None:
             image_path=final_path.relative_to(job.media_dir).as_posix(),
             final_bytes=final_bytes,
         )
+
+
+def base_image_filename(channel: str, post_ids: Iterable[int]) -> str:
+    """The raw image names the posts built from it, so a retry never overwrites an earlier raw image."""
+    return f"{channel}-base-{'-'.join(f'post{post_id}' for post_id in sorted(post_ids))}.jpg"
 
 
 def _output_for_channel(channel: str, outputs: Mapping[str, OutputT], what: str) -> OutputT:
@@ -257,24 +292,41 @@ def _image_size(image_bytes: bytes, channel: str) -> tuple[int, int]:
 # ---------------------------------------------------------------- text generation
 
 
-def _generate_scenes(text_client: TextClient, context: BriefContext, specs: dict[str, ChannelSpec]) -> dict[str, str]:
+def _text_zone(requested: str, spec: ChannelSpec) -> TextZone:
+    """The zone the scene writer chose, if the channel's shape allows it; otherwise the default."""
+    allowed = allowed_text_zones(spec.image.width, spec.image.height)
+    cleaned = requested.strip().lower()
+    return next((zone for zone in allowed if zone.value == cleaned), DEFAULT_TEXT_ZONE)
+
+
+def _generate_scenes(
+    text_client: TextClient, context: BriefContext, specs: dict[str, ChannelSpec]
+) -> dict[str, PlannedScene]:
     scene_set = text_client.generate(scene_prompt(context, specs), SceneSet)
-    scenes: dict[str, str] = {}
+    scenes: dict[str, PlannedScene] = {}
     for scene in scene_set.scenes:
         if scene.channel in specs and scene.channel not in scenes and scene.scene.strip():
-            scenes[scene.channel] = scene.scene.strip()
+            scenes[scene.channel] = PlannedScene(
+                scene=scene.scene.strip(), text_zone=_text_zone(scene.text_zone, specs[scene.channel])
+            )
     return scenes
 
 
 def _generate_copy(
-    text_client: TextClient, context: BriefContext, language: Language, specs: dict[str, ChannelSpec]
+    text_client: TextClient,
+    context: BriefContext,
+    language: Language,
+    specs: dict[str, ChannelSpec],
+    scenes: Future[dict[str, PlannedScene]],
 ) -> CopyOutcome:
-    """One call for all channels; channels that break a limit get one corrective retry with feedback."""
+    """One call for all channels, written for their photos; channels that break a limit get one corrective retry
+    with feedback. If the scenes failed, this raises the same error and no copy call is made."""
+    photos = {channel: planned.scene for channel, planned in scenes.result().items()}
     accepted: dict[str, ChannelCopy] = {}
     problems: dict[str, list[str]] = {}
     for _attempt in range(MAX_COPY_ATTEMPTS):
         feedback = [problem for channel_problems in problems.values() for problem in channel_problems]
-        copy_set = text_client.generate(copy_prompt(context, language, specs, feedback), CopySet)
+        copy_set = text_client.generate(copy_prompt(context, language, specs, photos, feedback), CopySet)
         returned = {}
         for post in copy_set.posts:
             returned.setdefault(post.channel, post)
@@ -286,7 +338,7 @@ def _generate_copy(
                 problems[channel] = [f"{channel}: no post was returned"]
                 continue
             post = _normalized(returned[channel])
-            channel_problems = limit_problems(channel, post, spec)
+            channel_problems = limit_problems(channel, post, spec, language)
             if channel_problems:
                 problems[channel] = channel_problems
             else:
@@ -296,7 +348,7 @@ def _generate_copy(
     return CopyOutcome(
         accepted=accepted,
         problems={
-            channel: f"{language} copy for {channel} still breaks limits after {MAX_COPY_ATTEMPTS} attempts: "
+            channel: f"{language} copy for {channel} still breaks the rules after {MAX_COPY_ATTEMPTS} attempts: "
             + "; ".join(channel_problems)
             for channel, channel_problems in problems.items()
         },
@@ -314,8 +366,26 @@ def _normalized(post: ChannelCopy) -> ChannelCopy:
     )
 
 
-def limit_problems(channel: str, post: ChannelCopy, spec: ChannelSpec) -> list[str]:
+def language_problems(channel: str, post: ChannelCopy, language: Language) -> list[str]:
+    """The headline and caption must be written in the post's own language. Hashtags are exempt."""
     problems = []
+    for field_name, text in (("headline", post.headline), ("caption", post.caption)):
+        share = bengali_letter_share(text)
+        if share is None:
+            continue  # Empty text is reported separately.
+        if language == Language.ENGLISH and share > MAX_BENGALI_SHARE_IN_ENGLISH_TEXT:
+            problems.append(
+                f"{channel}: the {field_name} must be written in English, but {share:.0%} of its letters are Bengali"
+            )
+        if language == Language.BENGALI and share < MIN_BENGALI_SHARE_IN_BENGALI_TEXT:
+            problems.append(
+                f"{channel}: the {field_name} must be written in Bengali, but only {share:.0%} of its letters are Bengali"
+            )
+    return problems
+
+
+def limit_problems(channel: str, post: ChannelCopy, spec: ChannelSpec, language: Language) -> list[str]:
+    problems = language_problems(channel, post, language)
     headline_words = len(post.headline.split())
     if headline_words == 0:
         problems.append(f"{channel}: headline is empty")

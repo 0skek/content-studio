@@ -7,28 +7,14 @@ from fastapi import APIRouter, BackgroundTasks, Depends, status
 from sqlalchemy import select
 from sqlalchemy.orm import Session, sessionmaker
 
-from app.config import settings
-from app.db import SessionLocal, get_session
-from app.generation_clients import GenerationClients, build_generation_clients
+from app.db import get_session
+from app.dependencies import get_generation_clients, get_media_dir, get_session_factory
+from app.generation_clients import GenerationClients
 from app.generation_service import create_brief_with_drafts, load_brief, run_brief_generation
 from app.models import Brief
 from app.schemas import BriefCreate, BriefOut, BriefSummaryOut
 
 router = APIRouter(prefix="/briefs", tags=["briefs"])
-
-
-# Dependencies, overridden in tests with fakes, a test database and a temporary media folder.
-def get_generation_clients() -> GenerationClients:
-    return build_generation_clients(settings)
-
-
-def get_session_factory() -> sessionmaker[Session]:
-    return SessionLocal
-
-
-def get_media_dir() -> Path:
-    return settings.media_dir
-
 
 SessionDep = Annotated[Session, Depends(get_session)]
 

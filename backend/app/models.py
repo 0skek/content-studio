@@ -91,8 +91,9 @@ class Post(Base):
         _string_enum_column(PostStatus, "post_status"), default=PostStatus.DRAFT
     )
     rejection_reason: Mapped[str | None] = mapped_column(Text)
-    # A retry is a new draft whose parent is the discarded post it replaces.
-    parent_post_id: Mapped[int | None] = mapped_column(ForeignKey("posts.id"))
+    # A retry is a new draft whose parent is the discarded post it replaces. Unique: a post is retried at most
+    # once, so each channel/language slot's history is a simple chain.
+    parent_post_id: Mapped[int | None] = mapped_column(ForeignKey("posts.id"), unique=True)
     scheduled_at: Mapped[datetime | None] = mapped_column(UTCDateTime)
     published_at: Mapped[datetime | None] = mapped_column(UTCDateTime)
 
@@ -109,6 +110,7 @@ class Post(Base):
                 f"New posts must start as '{PostStatus.DRAFT}', not {initial_status!r}; "
                 "change status only through transition()"
             )
+        fields.setdefault("generation_status", GenerationStatus.PENDING)
         super().__init__(**fields)
 
     @validates("channel")

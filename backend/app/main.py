@@ -10,12 +10,12 @@ from fastapi.staticfiles import StaticFiles
 
 from app import models  # noqa: F401  (registers every table on Base.metadata before create_all)
 from app.channels import get_channel_specs
-from app.config import MEDIA_URL_PATH, settings
+from app.config import MEDIA_URL_PATH, PRODUCTION_IMAGE_PROVIDER, PRODUCTION_TEXT_PROVIDER, settings
 from app.db import Base, SessionLocal, engine
 from app.generation_clients import GenerationNotConfigured
 from app.generation_service import BriefNotFound, fail_interrupted_generation
-from app.headline_overlay import ensure_text_shaping_available
-from app.post_service import PostNotFound
+from app.headline_overlay import ensure_face_detection_available, ensure_text_shaping_available
+from app.post_service import NotRetryable, PostNotFound
 from app.post_status import InvalidTransition
 from app.routes import briefs, channels, posts
 
@@ -27,6 +27,7 @@ logger = logging.getLogger(__name__)
 async def lifespan(app: FastAPI) -> AsyncIterator[None]:
     get_channel_specs()  # Fail fast at startup if channels.json is invalid.
     ensure_text_shaping_available()  # Fail fast if Bengali headlines would render broken.
+    ensure_face_detection_available()  # Headlines are kept off faces.
     settings.database_path.parent.mkdir(parents=True, exist_ok=True)
     settings.media_dir.mkdir(parents=True, exist_ok=True)
     Base.metadata.create_all(engine)
@@ -50,6 +51,11 @@ async def handle_invalid_transition(request: Request, error: InvalidTransition) 
     return JSONResponse(status_code=status.HTTP_409_CONFLICT, content={"detail": str(error)})
 
 
+@app.exception_handler(NotRetryable)
+async def handle_not_retryable(request: Request, error: NotRetryable) -> JSONResponse:
+    return JSONResponse(status_code=status.HTTP_409_CONFLICT, content={"detail": str(error)})
+
+
 @app.exception_handler(PostNotFound)
 async def handle_post_not_found(request: Request, error: PostNotFound) -> JSONResponse:
     return JSONResponse(status_code=status.HTTP_404_NOT_FOUND, content={"detail": str(error)})
@@ -66,5 +72,12 @@ async def handle_generation_not_configured(request: Request, error: GenerationNo
 
 
 @app.get("/health")
-def health() -> dict[str, str]:
-    return {"status": "ok"}
+def health() -> dict[str, str | bool]:
+    """Includes the active generation providers, so the UI can warn when dev providers are on."""
+    return {
+        "status": "ok",
+        "text_provider": settings.text_provider,
+        "image_provider": settings.image_provider,
+        "production_providers": settings.text_provider == PRODUCTION_TEXT_PROVIDER
+        and settings.image_provider == PRODUCTION_IMAGE_PROVIDER,
+    }
